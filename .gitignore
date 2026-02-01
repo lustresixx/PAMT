@@ -34,3 +34,5 @@ Thumbs.db
 
 # App data
 /data/pamt_memory.json
+
+config/api_config.json
