@@ -1,0 +1,9 @@
+﻿# Core runtime has no strict external dependencies.
+
+# Optional (model-backed preference extraction)
+torch
+transformers
+gliner
+paddlenlp
+opennre
+spacy

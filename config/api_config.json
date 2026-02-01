@@ -1,0 +1,10 @@
+{
+  "provider": "deepseek",
+  "model_name": "deepseek-chat",
+  "api_base_url": "https://api.deepseek.com/v1",
+  "api_key": "sk-1e0947fe27ad45c394e6872afc45acb3",
+  "request_timeout": 600,
+  "ollama_url": "http://localhost:11434/api/generate",
+  "embed_provider": "hf",
+  "embed_model_name": "sentence-transformers/all-MiniLM-L6-v2"
+}

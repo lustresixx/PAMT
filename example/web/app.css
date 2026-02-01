@@ -1,0 +1,137 @@
+/* Tailwind is loaded via CDN in index.html */
+
+/* Custom Scrollbar for refined look */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Chat Bubbles Animation */
+@keyframes bubbleIn {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.chat-bubble-anim {
+  animation: bubbleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Card Content Animations */
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes progressGrow {
+  from { width: 0; }
+}
+
+/* Smooth transitions for content updates instead of animations */
+#node-detail,
+#debug-log {
+  transition: opacity 0.15s ease-out;
+}
+
+/* Only animate preference items when they first appear */
+#node-detail .preference-item {
+  animation: fadeSlideIn 0.15s ease-out forwards;
+}
+
+#node-detail .preference-item:nth-child(1) { animation-delay: 0s; }
+#node-detail .preference-item:nth-child(2) { animation-delay: 0.02s; }
+#node-detail .preference-item:nth-child(3) { animation-delay: 0.04s; }
+#node-detail .preference-item:nth-child(4) { animation-delay: 0.06s; }
+#node-detail .preference-item:nth-child(5) { animation-delay: 0.08s; }
+
+/* Timing items with minimal animation */
+#debug-log .timing-item {
+  animation: fadeSlideIn 0.1s ease-out forwards;
+}
+
+#debug-log .timing-item:nth-child(1) { animation-delay: 0.05s; }
+#debug-log .timing-item:nth-child(2) { animation-delay: 0.1s; }
+#debug-log .timing-item:nth-child(3) { animation-delay: 0.15s; }
+#debug-log .timing-item:nth-child(4) { animation-delay: 0.2s; }
+#debug-log .timing-item:nth-child(5) { animation-delay: 0.25s; }
+
+/* Progress bar animation */
+#node-detail .h-1\.5 > div,
+#debug-log .h-1 > div {
+  animation: progressGrow 0.6s ease-out;
+}
+
+/* Spinner animation */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Pulse animation for active indicators */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Tree Canvas Styles */
+.tree-canvas {
+  /* Hides native scrollbars but allows scrolling via JS/CSS overflow */
+  scrollbar-width: none; 
+  -ms-overflow-style: none;
+}
+.tree-canvas::-webkit-scrollbar { 
+  display: none; 
+}
+
+/* SVG Styles */
+.tree-link {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: all 0.3s ease;
+}
+
+.tree-node {
+  cursor: pointer;
+  transition: opacity 0.3s ease;
+}
+
+.tree-node:hover .node-card-bg {
+  filter: drop-shadow(0 10px 15px rgba(79, 70, 229, 0.15));
+  stroke: #6366f1;
+}
+
+.tree-node.active .node-card-bg {
+  stroke: #4f46e5;
+  stroke-width: 2px;
+  filter: drop-shadow(0 4px 8px rgba(79, 70, 229, 0.2));
+}
+
+.tree-node text {
+  font-family: 'Inter', sans-serif;
+  pointer-events: none;
+}
+
+.node-title {
+  font-weight: 600;
+}
+
+.node-subtitle {
+  font-family: 'JetBrains Mono', monospace;
+}

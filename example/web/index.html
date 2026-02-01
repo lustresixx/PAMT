@@ -1,0 +1,156 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PAMT Memory Tree</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              mono: ['JetBrains Mono', 'monospace'],
+            },
+            colors: {
+              primary: '#4f46e5',
+              secondary: '#64748b',
+              accent: '#0ea5e9',
+            }
+          }
+        }
+      }
+    </script>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body class="bg-slate-50 text-slate-900 h-screen w-screen overflow-hidden flex flex-col font-sans selection:bg-indigo-100 selection:text-indigo-900">
+    
+    <!-- Top Header -->
+    <header class="h-14 border-b border-slate-200 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 flex-shrink-0 z-20 relative">
+      <div class="flex items-center gap-3">
+        <div class="h-8 w-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-mono font-bold text-sm shadow-md shadow-indigo-200">
+          PM
+        </div>
+        <div>
+          <h1 class="font-semibold text-sm text-slate-900 leading-tight" data-i18n="app_title">PAMT Memory Tree</h1>
+          <p class="text-xs text-slate-500 font-medium" data-i18n="app_subtitle">Live Preference Learning</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-4">
+        <!-- Language Toggle -->
+        <button id="lang-toggle" class="px-3 py-1 text-xs font-semibold rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors">
+          EN / 中
+        </button>
+        <div id="status-pill" class="px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-600 text-xs font-medium flex items-center gap-1.5 transition-colors">
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span data-i18n="status_ready">Ready</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="flex-1 flex overflow-hidden relative">
+      
+      <!-- Left Sidebar: Chat -->
+      <section class="w-[400px] flex-shrink-0 bg-white border-r border-slate-200 flex flex-col shadow-sm z-10">
+        <div class="p-4 border-b border-slate-100 flex-shrink-0 bg-slate-50/50">
+          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1" data-i18n="chat_title">Dialogue Stream</h2>
+          <p class="text-xs text-slate-500" data-i18n="chat_desc">Interact with the model to grow the tree.</p>
+        </div>
+        
+        <div id="chat-window" class="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth">
+          <!-- Chat bubbles injected here -->
+          <div id="chat-placeholder" class="flex flex-col items-center justify-center h-full text-center text-slate-400 p-8 opacity-60">
+            <svg class="w-10 h-10 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+            <p class="text-sm" data-i18n="chat_empty">Start a conversation to begin</p>
+          </div>
+        </div>
+
+        <div class="p-4 border-t border-slate-100 bg-white">
+          <div class="flex items-center justify-between mb-3">
+            <label class="flex items-center gap-2 text-xs text-slate-500">
+              <input id="use-tree-toggle" type="checkbox" checked class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/30" />
+              <span data-i18n="chat_use_tree">Use Memory Tree</span>
+            </label>
+            <label class="flex items-center gap-2 text-xs text-slate-500">
+              <input id="use-context-toggle" type="checkbox" checked class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/30" />
+              <span data-i18n="chat_use_context">Use Context</span>
+            </label>
+          </div>
+          <form id="chat-form" class="relative group">
+            <input 
+              type="text" 
+              id="chat-text" 
+              placeholder="Type your message..." 
+              autocomplete="off"
+              class="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-4 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all placeholder:text-slate-400"
+            />
+            <button 
+              type="submit" 
+              class="absolute right-2 top-1.5 p-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"></path></svg>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- Right Main: Tree Canvas -->
+      <section class="flex-1 relative bg-slate-50 flex flex-col overflow-hidden group/canvas">
+        <!-- Dot Pattern Background -->
+        <div class="absolute inset-0 opacity-[0.4]" style="background-image: radial-gradient(#cbd5e1 1px, transparent 1px); background-size: 24px 24px;"></div>
+        
+        <!-- Canvas -->
+        <div class="tree-canvas w-full h-full overflow-auto cursor-grab active:cursor-grabbing relative z-0 select-none">
+          <svg id="tree-svg" class="block"></svg>
+        </div>
+
+        <!-- Floating Inspector Panel -->
+        <div class="absolute top-4 right-4 w-80 flex flex-col gap-3 pointer-events-none">
+          
+          <!-- Node Detail Card -->
+          <div class="bg-white/90 backdrop-blur-sm border border-slate-200 shadow-lg rounded-xl overflow-hidden pointer-events-auto transition-all hover:shadow-xl">
+            <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+                <span data-i18n="inspector_title">Node Inspector</span>
+              </h3>
+            </div>
+            <div id="node-detail" class="p-4 text-xs font-mono text-slate-600 space-y-2 leading-relaxed">
+              <span class="text-slate-400 italic" data-i18n="inspector_empty">Select a node to view details...</span>
+            </div>
+          </div>
+
+          <!-- Debug/Process Log Card -->
+          <div class="bg-white/90 backdrop-blur-sm border border-slate-200 shadow-lg rounded-xl overflow-hidden pointer-events-auto flex flex-col max-h-[400px] transition-all hover:shadow-xl">
+             <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+                <span data-i18n="debug_title">Computation</span>
+              </h3>
+            </div>
+            <div id="debug-log" class="p-0 overflow-y-auto custom-scrollbar text-xs font-mono">
+              <div class="p-4 text-slate-400 italic" data-i18n="debug_idle">System idle.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Zoom Controls -->
+        <div class="absolute bottom-6 right-6 flex gap-2 pointer-events-auto">
+          <div class="bg-white border border-slate-200 shadow-lg rounded-lg p-1.5 text-xs font-mono text-slate-500 select-none" data-i18n="canvas_controls">
+            SCROLL TO ZOOM / DRAG TO PAN
+          </div>
+        </div>
+
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
+

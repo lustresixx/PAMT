@@ -1,0 +1,22 @@
+﻿You are summarizing a leaf label for a memory tree.
+
+Inputs:
+Category: {{category}}
+Current leaf label: {{leaf}}
+
+Recent samples (query + response):
+{{samples}}
+
+New exchange:
+User: {{query}}
+Assistant: {{response}}
+
+Task:
+- Produce a coarser, stable label that can cover the samples and the new exchange.
+- Pick the single most dominant direction if multiple appear.
+
+Rules:
+- Output JSON only: {"leaf": "Label"}
+- 1-3 words, Title Case, ASCII only.
+- Avoid overly specific terms or example names.
+- Do not mention "User" or "Assistant" in the label.
