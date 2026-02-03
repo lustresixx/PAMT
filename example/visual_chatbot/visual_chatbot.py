@@ -1,17 +1,45 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
 import logging
+import os
 import threading
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+try:
+    from langfuse import Langfuse
+    from langfuse import observe
+    from langfuse.api.client import FernLangfuse
+    from langfuse.api.resources.ingestion.types import (
+        CreateGenerationBody,
+        CreateSpanBody,
+        IngestionEvent_GenerationCreate,
+        IngestionEvent_GenerationUpdate,
+        IngestionEvent_SpanCreate,
+        IngestionEvent_SpanUpdate,
+        IngestionEvent_TraceCreate,
+        TraceBody,
+        UpdateGenerationBody,
+        UpdateSpanBody,
+    )
+    LANGFUSE_AVAILABLE = True
+except ImportError:
+    LANGFUSE_AVAILABLE = False
+    Langfuse = None
+    langfuse_context = None
+    observe = None
+    FernLangfuse = None
 
 from pamt.config import EmbeddingConfig, ModelConfig, PreferenceConfig, UpdateConfig
 from pamt.core.memory_tree import HierarchicalMemoryTree, RetrievalConfig
@@ -24,6 +52,277 @@ from pamt.extractors.preference_extractor import (
 from pamt.embeddings.models import DeepSeekEmbeddings, EmbeddingClient, HFLocalEmbeddings, OllamaEmbeddings
 from pamt.llms.models import DeepSeekLLM, LLM, OllamaLLM
 from pamt.logging_utils import setup_logging
+
+# Global langfuse client (initialized in main if enabled)
+_langfuse_client: Optional["Langfuse"] = None
+logger = logging.getLogger(__name__)
+
+
+def _env_flag(name: str) -> bool:
+    value = os.environ.get(name, "")
+    if not value:
+        return False
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _prompt_preview(prompt: str, max_len: int = 2000) -> str:
+    if max_len <= 0 or len(prompt) <= max_len:
+        return prompt
+    truncated = len(prompt) - max_len
+    return f"{prompt[:max_len]}\n...[truncated {truncated} chars]"
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _event_timestamp() -> str:
+    return _now_utc().isoformat().replace("+00:00", "Z")
+
+
+def _otel_endpoint_available(host: str) -> bool:
+    url = f"{host.rstrip('/')}/api/public/otel/v1/traces"
+    req = Request(url, method="OPTIONS")
+    try:
+        with urlopen(req, timeout=2) as resp:
+            return resp.status != 404
+    except HTTPError as exc:
+        return exc.code != 404
+    except URLError:
+        return False
+
+
+class _LegacySpan:
+    def __init__(
+        self,
+        client: "_LegacyLangfuseClient",
+        trace_id: str,
+        span_id: str,
+        span_type: str = "span",
+    ) -> None:
+        self._client = client
+        self._trace_id = trace_id
+        self._span_id = span_id
+        self._span_type = span_type
+
+    def start_span(self, *, name: str, input: Any = None, metadata: Any = None) -> "_LegacySpan":
+        return self._client._create_span(
+            trace_id=self._trace_id,
+            parent_id=self._span_id,
+            name=name,
+            input=input,
+            metadata=metadata,
+        )
+
+    def start_observation(
+        self,
+        *,
+        name: str,
+        as_type: str = "span",
+        input: Any = None,
+        metadata: Any = None,
+        model: str | None = None,
+    ) -> "_LegacySpan":
+        if as_type == "generation":
+            return self._client._create_generation(
+                trace_id=self._trace_id,
+                parent_id=self._span_id,
+                name=name,
+                input=input,
+                metadata=metadata,
+                model=model,
+            )
+        return self.start_span(name=name, input=input, metadata=metadata)
+
+    def update(self, **kwargs: Any) -> None:
+        self._client._update_observation(self._span_id, self._trace_id, self._span_type, **kwargs)
+
+    def update_trace(self, **kwargs: Any) -> None:
+        self._client._update_trace(self._trace_id, **kwargs)
+
+    def end(self) -> None:
+        self._client._end_observation(self._span_id, self._trace_id, self._span_type)
+
+
+class _LegacyLangfuseClient:
+    def __init__(self, *, public_key: str, secret_key: str, host: str) -> None:
+        if FernLangfuse is None:
+            raise RuntimeError("Langfuse ingestion client not available")
+        self._api = FernLangfuse(
+            base_url=host,
+            username=public_key,
+            password=secret_key,
+            x_langfuse_sdk_name="python",
+            x_langfuse_sdk_version="legacy",
+            x_langfuse_public_key=public_key,
+        )
+        self._lock = threading.Lock()
+
+    def create_trace_id(self) -> str:
+        return str(uuid4())
+
+    def start_span(
+        self,
+        *,
+        trace_context: Optional[Dict[str, Any]] = None,
+        name: str,
+        input: Optional[Any] = None,
+        output: Optional[Any] = None,
+        metadata: Optional[Any] = None,
+        **_: Any,
+    ) -> _LegacySpan:
+        trace_id = trace_context.get("trace_id") if trace_context else self.create_trace_id()
+        span_id = str(uuid4())
+        trace_body = TraceBody(
+            id=trace_id,
+            name=name,
+            input=input,
+            output=output,
+            metadata=metadata,
+            timestamp=_now_utc(),
+        )
+        span_body = CreateSpanBody(
+            id=span_id,
+            trace_id=trace_id,
+            name=name,
+            start_time=_now_utc(),
+            input=input,
+            output=output,
+            metadata=metadata,
+        )
+        self._send_events(
+            [
+                IngestionEvent_TraceCreate(
+                    id=str(uuid4()),
+                    timestamp=_event_timestamp(),
+                    body=trace_body,
+                ),
+                IngestionEvent_SpanCreate(
+                    id=str(uuid4()),
+                    timestamp=_event_timestamp(),
+                    body=span_body,
+                ),
+            ]
+        )
+        return _LegacySpan(self, trace_id, span_id, "span")
+
+    def _create_span(
+        self,
+        *,
+        trace_id: str,
+        parent_id: Optional[str],
+        name: str,
+        input: Any = None,
+        metadata: Any = None,
+    ) -> _LegacySpan:
+        span_id = str(uuid4())
+        span_body = CreateSpanBody(
+            id=span_id,
+            trace_id=trace_id,
+            parent_observation_id=parent_id,
+            name=name,
+            start_time=_now_utc(),
+            input=input,
+            metadata=metadata,
+        )
+        self._send_events(
+            [
+                IngestionEvent_SpanCreate(
+                    id=str(uuid4()),
+                    timestamp=_event_timestamp(),
+                    body=span_body,
+                )
+            ]
+        )
+        return _LegacySpan(self, trace_id, span_id, "span")
+
+    def _create_generation(
+        self,
+        *,
+        trace_id: str,
+        parent_id: Optional[str],
+        name: str,
+        input: Any = None,
+        metadata: Any = None,
+        model: Optional[str] = None,
+    ) -> _LegacySpan:
+        gen_id = str(uuid4())
+        gen_body = CreateGenerationBody(
+            id=gen_id,
+            trace_id=trace_id,
+            parent_observation_id=parent_id,
+            name=name,
+            start_time=_now_utc(),
+            input=input,
+            metadata=metadata,
+            model=model,
+        )
+        self._send_events(
+            [
+                IngestionEvent_GenerationCreate(
+                    id=str(uuid4()),
+                    timestamp=_event_timestamp(),
+                    body=gen_body,
+                )
+            ]
+        )
+        return _LegacySpan(self, trace_id, gen_id, "generation")
+
+    def _update_trace(self, trace_id: str, **kwargs: Any) -> None:
+        trace_body = TraceBody(id=trace_id, timestamp=_now_utc(), **kwargs)
+        self._send_events(
+            [
+                IngestionEvent_TraceCreate(
+                    id=str(uuid4()),
+                    timestamp=_event_timestamp(),
+                    body=trace_body,
+                )
+            ]
+        )
+
+    def _update_observation(self, span_id: str, trace_id: str, span_type: str, **kwargs: Any) -> None:
+        if span_type == "generation":
+            body = UpdateGenerationBody(id=span_id, trace_id=trace_id, **kwargs)
+            event = IngestionEvent_GenerationUpdate(
+                id=str(uuid4()),
+                timestamp=_event_timestamp(),
+                body=body,
+            )
+        else:
+            body = UpdateSpanBody(id=span_id, trace_id=trace_id, **kwargs)
+            event = IngestionEvent_SpanUpdate(
+                id=str(uuid4()),
+                timestamp=_event_timestamp(),
+                body=body,
+            )
+        self._send_events([event])
+
+    def _end_observation(self, span_id: str, trace_id: str, span_type: str) -> None:
+        if span_type == "generation":
+            body = UpdateGenerationBody(id=span_id, trace_id=trace_id, end_time=_now_utc())
+            event = IngestionEvent_GenerationUpdate(
+                id=str(uuid4()),
+                timestamp=_event_timestamp(),
+                body=body,
+            )
+        else:
+            body = UpdateSpanBody(id=span_id, trace_id=trace_id, end_time=_now_utc())
+            event = IngestionEvent_SpanUpdate(
+                id=str(uuid4()),
+                timestamp=_event_timestamp(),
+                body=body,
+            )
+        self._send_events([event])
+
+    def _send_events(self, events: List[Any]) -> None:
+        if not events:
+            return
+        try:
+            with self._lock:
+                self._api.ingestion.batch(batch=events)
+        except Exception:
+            # Keep chat flow alive even if ingestion fails.
+            return
 
 
 def _build_prompt_source(history: List[str], user_text: str) -> str:
@@ -81,6 +380,7 @@ class ChatSession:
     history_lines: List[str] = field(default_factory=list)
     messages: List[Dict[str, str]] = field(default_factory=list)
     last_debug: Dict[str, Any] | None = field(default=None, init=False)
+    session_id: str = field(default_factory=lambda: uuid4().hex)
 
     def _is_short_query(self, user_text: str) -> bool:
         threshold = self.tree.retrieval_config.short_query_max_chars
@@ -102,6 +402,28 @@ class ChatSession:
         use_tree: bool = True,
         use_context: bool = True,
     ) -> str:
+        global _langfuse_client
+
+        # Create langfuse trace early to capture the full process
+        trace = None
+        trace_turn = None
+        if _langfuse_client is not None:
+            trace_turn = len(self.messages) // 2 + 1
+            # Initial trace input (will be updated later with full prompt)
+            trace_input = {"user_text": user_text, "use_tree": use_tree, "use_context": use_context}
+            trace = _langfuse_client.start_span(
+                name="chat_response",
+                trace_context={"trace_id": _langfuse_client.create_trace_id()},
+                input=trace_input,
+                metadata={"turn": trace_turn},
+            )
+            trace.update_trace(
+                name="chat_response",
+                session_id=self.session_id,
+                input=trace_input,
+                metadata={"turn": trace_turn},
+            )
+
         mode = "memory_tree" if use_tree else "baseline"
         progress: Dict[str, Any] = {
             "stage": "start",
@@ -118,6 +440,15 @@ class ChatSession:
         memory_info = None
         if use_tree:
             pref_start = perf_counter()
+
+            # Langfuse span for preference retrieval
+            retrieval_span = None
+            if trace is not None:
+                retrieval_span = trace.start_span(
+                    name="preference_retrieval",
+                    input={"query": user_text},
+                )
+
             fusion, retrieval_trace = self.tree.get_preference_trace(user_text)
             pref_ms = (perf_counter() - pref_start) * 1000
             if self._should_use_context_retrieval(user_text, retrieval_trace):
@@ -127,6 +458,14 @@ class ChatSession:
                 pref_ms += (perf_counter() - context_start) * 1000
                 if retrieval_trace is not None:
                     retrieval_trace["context_used"] = True
+
+            if retrieval_span is not None:
+                retrieval_span.update(
+                    output={"strategy": retrieval_trace.get("strategy") if retrieval_trace else None},
+                    metadata={"duration_ms": pref_ms},
+                )
+                retrieval_span.end()
+
             progress["stage"] = "preference_retrieval"
             progress["timing_ms"]["preference_retrieval"] = pref_ms
             progress["retrieval"] = retrieval_trace
@@ -144,16 +483,65 @@ class ChatSession:
         else:
             prompt = build_prompt(prompt_source, fusion, self.pref_config)
         prompt_ms = (perf_counter() - prompt_start) * 1000
+
+        # Update trace input with the full prompt
+        if trace is not None:
+            trace_input = {
+                "user_text": user_text,
+                "use_tree": use_tree,
+                "use_context": use_context,
+                "prompt": prompt,
+                "prompt_source": prompt_source,
+                "has_fusion": fusion is not None
+            }
+            trace.update(input=trace_input)
+            trace.update_trace(input=trace_input)
+        if _env_flag("PAMT_PROMPT_LOG"):
+            try:
+                max_len = int(os.environ.get("PAMT_PROMPT_LOG_MAX", "2000") or 2000)
+            except ValueError:
+                max_len = 2000
+            prompt_mode = "memory" if fusion is not None else "raw"
+            logger.info("LLM prompt (%s):\n%s", prompt_mode, _prompt_preview(prompt, max_len=max_len))
         progress["stage"] = "prompt_build"
         progress["timing_ms"]["prompt_build"] = prompt_ms
         progress_cb(dict(progress))
 
         progress["stage"] = "llm_generate"
         progress_cb(dict(progress))
+
+        # Langfuse generation for LLM call
+        generation = None
+        if trace is not None:
+            generation = trace.start_observation(
+                name="llm_generate",
+                as_type="generation",
+                model=getattr(self.llm, "config", None) and self.llm.config.model_name or "unknown",
+                input=prompt,
+            )
+
         llm_start = perf_counter()
         response = self.llm.generate(prompt)
         token_count = _get_completion_tokens(self.llm)
         llm_ms = (perf_counter() - llm_start) * 1000
+
+        # End langfuse generation
+        if generation is not None:
+            usage = getattr(self.llm, "last_usage", None)
+            usage_details = None
+            if usage is not None:
+                usage_details = {
+                    "input": usage.prompt_tokens,
+                    "output": usage.completion_tokens,
+                    "total": usage.total_tokens,
+                }
+            generation.update(
+                output=response,
+                usage_details=usage_details,
+                metadata={"duration_ms": llm_ms},
+            )
+            generation.end()
+
         progress["timing_ms"]["llm_generate"] = llm_ms
         progress_cb(dict(progress))
 
@@ -167,6 +555,14 @@ class ChatSession:
         update_ms = None
         update_info = None
         if use_tree:
+            # Langfuse span for extraction
+            extract_span = None
+            if trace is not None:
+                extract_span = trace.start_span(
+                    name="preference_extraction",
+                    input={"user": user_text, "response": response[:200]},
+                )
+
             extract_start = perf_counter()
             pref = self.extractor.extract(
                 user_text,
@@ -176,20 +572,60 @@ class ChatSession:
             )
             content_text = self.tree._combine_text(user_text, response)
             extract_ms = (perf_counter() - extract_start) * 1000
+
+            if extract_span is not None:
+                extract_span.update(
+                    output={"preference": pref.__dict__ if hasattr(pref, "__dict__") else str(pref)},
+                    metadata={"duration_ms": extract_ms},
+                )
+                extract_span.end()
+
             progress["stage"] = "extractor"
             progress["timing_ms"]["extractor"] = extract_ms
             progress_cb(dict(progress))
 
+            # Langfuse span for routing
+            route_span = None
+            if trace is not None:
+                route_span = trace.start_span(
+                    name="route_query",
+                    input={"user": user_text},
+                )
+
             route_start = perf_counter()
             path = self.tree.route_response(user_text, response)
             route_ms = (perf_counter() - route_start) * 1000
+
+            if route_span is not None:
+                route_span.update(
+                    output={"path": path},
+                    metadata={"duration_ms": route_ms},
+                )
+                route_span.end()
+
             progress["stage"] = "route_query"
             progress["timing_ms"]["route_query"] = route_ms
             progress_cb(dict(progress))
 
+            # Langfuse span for update
+            update_span = None
+            if trace is not None:
+                update_span = trace.start_span(
+                    name="memory_update",
+                    input={"path": path},
+                )
+
             update_start = perf_counter()
             update_info = self.tree.update_preference_trace(path, pref, content_text)
             update_ms = (perf_counter() - update_start) * 1000
+
+            if update_span is not None:
+                update_span.update(
+                    output=update_info,
+                    metadata={"duration_ms": update_ms},
+                )
+                update_span.end()
+
             progress["stage"] = "update"
             progress["timing_ms"]["update"] = update_ms
             progress["update"] = update_info
@@ -212,6 +648,19 @@ class ChatSession:
             "use_context": use_context,
             "memory": memory_info,
         }
+
+        # End langfuse trace
+        if trace is not None:
+            trace.update(
+                output={"response": response},
+                metadata={"total_ms": total_ms, "mode": mode},
+            )
+            trace.update_trace(
+                output={"response": response},
+                metadata={"total_ms": total_ms, "mode": mode},
+            )
+            trace.end()
+
         progress["stage"] = "done"
         progress["timing_ms"]["total"] = total_ms
         progress_cb(dict(progress))
@@ -396,14 +845,55 @@ def _parse_args() -> argparse.Namespace:
         help="Force heuristic extractor.",
     )
     parser.set_defaults(use_model_extractor=True)
+
+    # Langfuse arguments
+    parser.add_argument(
+        "--langfuse",
+        action="store_true",
+        help="Enable Langfuse tracing (requires LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY env vars).",
+    )
+    parser.add_argument("--langfuse-host", default="http://127.0.0.1:3000", help="Langfuse host URL.")
     return parser.parse_args()
 
 
 def main() -> None:
+    global _langfuse_client
+
     setup_logging()
     logger = logging.getLogger(__name__)
     args = _parse_args()
     web_dir = Path(__file__).resolve().parent / "web"
+
+    # Initialize Langfuse if enabled
+    if args.langfuse:
+        if not LANGFUSE_AVAILABLE:
+            logger.warning("Langfuse requested but not installed. Run: pip install langfuse")
+        else:
+            public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
+            secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "")
+            if not public_key or not secret_key:
+                logger.warning(
+                    "Langfuse enabled but LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY not set. "
+                    "Tracing will be disabled."
+                )
+            else:
+                if _otel_endpoint_available(args.langfuse_host):
+                    _langfuse_client = Langfuse(
+                        public_key=public_key,
+                        secret_key=secret_key,
+                        host=args.langfuse_host,
+                    )
+                    logger.info("Langfuse OTEL tracing enabled (host=%s)", args.langfuse_host)
+                else:
+                    _langfuse_client = _LegacyLangfuseClient(
+                        public_key=public_key,
+                        secret_key=secret_key,
+                        host=args.langfuse_host,
+                    )
+                    logger.warning(
+                        "Langfuse OTEL endpoint missing at %s; using legacy ingestion.",
+                        args.langfuse_host,
+                    )
 
     model_config = ModelConfig(
         provider=args.llm_provider,
@@ -456,6 +946,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-

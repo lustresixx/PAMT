@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import runpy
 import sys
 from pathlib import Path
@@ -67,7 +68,7 @@ def _build_args_from_config(config: dict) -> list[str]:
         config.get("embed_ollama_url", "http://localhost:11434/api/embeddings")
     )
 
-    return [
+    args = [
         "visual_chatbot.py",
         "--llm-provider",
         provider,
@@ -87,15 +88,46 @@ def _build_args_from_config(config: dict) -> list[str]:
         embed_ollama_url,
     ]
 
+    # Add langfuse arguments if enabled
+    if config.get("langfuse_enabled", False):
+        args.append("--langfuse")
+        langfuse_host = config.get("langfuse_host", "http://127.0.0.1:3000")
+        args.extend(["--langfuse-host", langfuse_host])
+    return args
+
 
 def main() -> None:
     script_path = Path(__file__).resolve().parent / "visual_chatbot.py"
+
     config_path, remaining = _extract_config_path(sys.argv[1:])
+    config = _load_config(config_path)
+
+    # Check for --langfuse flag in remaining args or config
+    langfuse_enabled = config.get("langfuse_enabled", False)
+
+    # Note: --start-langfuse is no longer supported here.
+    # Use `python start_langfuse.py` to start Langfuse Docker services separately.
+    if "--start-langfuse" in remaining:
+        print("[Warning] --start-langfuse is deprecated. Use `python start_langfuse.py` instead.")
+        remaining = [arg for arg in remaining if arg != "--start-langfuse"]
+
+    # Handle langfuse environment setup
+    if langfuse_enabled or "--langfuse" in remaining:
+        # Set environment variables for langfuse
+        langfuse_public_key = config.get("langfuse_public_key", "")
+        langfuse_secret_key = config.get("langfuse_secret_key", "")
+
+        if langfuse_public_key and langfuse_public_key != "YOUR_LANGFUSE_PUBLIC_KEY":
+            os.environ["LANGFUSE_PUBLIC_KEY"] = langfuse_public_key
+        if langfuse_secret_key and langfuse_secret_key != "YOUR_LANGFUSE_SECRET_KEY":
+            os.environ["LANGFUSE_SECRET_KEY"] = langfuse_secret_key
+
+
     if remaining:
         sys.argv = ["visual_chatbot.py", *remaining]
     else:
-        config = _load_config(config_path)
         sys.argv = _build_args_from_config(config)
+
     runpy.run_path(str(script_path), run_name="__main__")
 
 

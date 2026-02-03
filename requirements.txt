@@ -7,3 +7,7 @@ gliner
 paddlenlp
 opennre
 spacy
+
+# Optional (tracing and observability)
+langfuse
+
