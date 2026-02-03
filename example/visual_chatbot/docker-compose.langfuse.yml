@@ -1,0 +1,52 @@
+# Langfuse Docker Compose for PAMT Visual Chatbot
+# Usage:
+#   docker-compose -f docker-compose.langfuse.yml up -d
+#
+# After starting, access Langfuse at http://127.0.0.1:3000
+# Default credentials will be created on first signup.
+#
+# To use with visual_chatbot:
+#   python run_visual_chatbot.py --langfuse
+
+services:
+  langfuse-server:
+    image: langfuse/langfuse:2
+    container_name: langfuse-server
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      - NEXTAUTH_SECRET=mysecret
+      - SALT=mysalt
+      - NEXTAUTH_URL=http://127.0.0.1:3000
+      - TELEMETRY_ENABLED=${TELEMETRY_ENABLED:-true}
+      # Required for OTEL ingestion (/api/public/otel/v1/traces).
+      - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-true}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/public/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  langfuse-db:
+    image: postgres:15-alpine
+    container_name: langfuse-db
+    environment:
+      - POSTGRES_USER=langfuse
+      - POSTGRES_PASSWORD=langfuse
+      - POSTGRES_DB=langfuse
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  langfuse_postgres_data:
