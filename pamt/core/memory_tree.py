@@ -215,6 +215,9 @@ class HierarchicalMemoryTree:
         if response_text is None:
             response_text = ""
         combined_text = self._combine_text(query, response_text)
+        reused_path = self._reuse_existing_leaf(combined_text)
+        if reused_path is not None:
+            return reused_path
         category_label, leaf_label = self._infer_labels(query, response_text)
         category = self.root.get_or_create_child(category_label)
         if category.label is None:
@@ -628,6 +631,29 @@ class HierarchicalMemoryTree:
             if summary:
                 best_leaf.label = summary
         return best_leaf
+
+    def _reuse_existing_leaf(self, combined_text: str) -> List[str] | None:
+        if not combined_text:
+            return None
+        if not self.root.children:
+            return None
+        content_embedding = self.embedder.embed(combined_text)
+        best_score = -1.0
+        best_category = None
+        best_leaf = None
+        for category in self.root.children.values():
+            for leaf in category.children.values():
+                leaf_embedding = self._get_child_embedding(leaf)
+                score = self._cosine_similarity(content_embedding, leaf_embedding)
+                if score > best_score:
+                    best_score = score
+                    best_category = category
+                    best_leaf = leaf
+        if best_leaf is None or best_category is None:
+            return None
+        if best_score >= self.retrieval_config.leaf_reuse_threshold:
+            return [best_category.name, best_leaf.name]
+        return None
 
     @staticmethod
     def _cosine_similarity(left: List[float], right: List[float]) -> float:
