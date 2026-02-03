@@ -1,4 +1,5 @@
-﻿# PAMT: Preference-Aware Memory Tree
+# PAMT: Preference-Aware Memory Tree
+**English** | [中文](README_zh.md)
 Project name: **PAMT (Preference-Aware Memory Tree)**. The Python package name is `pamt`.
 
 A practical, runnable scaffold for preference-aware personalization with a memory tree. It learns user style signals over time and injects them into prompts, while keeping updates stable via SW/EMA fusion.
