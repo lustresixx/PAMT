@@ -1,15 +1,7 @@
-{
-  "provider": "deepseek",
+﻿{
   "model_name": "deepseek-chat",
   "api_base_url": "https://api.deepseek.com/v1",
   "api_key": "YOUR_API_KEY",
   "request_timeout": 600,
-  "ollama_url": "http://localhost:11434/api/generate",
-  "embed_provider": "hf",
-  "embed_model_name": "sentence-transformers/all-MiniLM-L6-v2",
-
-  "langfuse_enabled": false,
-  "langfuse_host": "http://localhost:3000",
-  "langfuse_public_key": "YOUR_LANGFUSE_PUBLIC_KEY",
-  "langfuse_secret_key": "YOUR_LANGFUSE_SECRET_KEY"
+  "embed_model_name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 }

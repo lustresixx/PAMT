@@ -1,8 +1,3 @@
-from .models import DeepSeekEmbeddings, EmbeddingClient, HFLocalEmbeddings, OllamaEmbeddings
+from .models import EmbeddingClient, HFLocalEmbeddings, OllamaEmbeddings, DeepSeekEmbeddings
 
-__all__ = [
-    "EmbeddingClient",
-    "OllamaEmbeddings",
-    "DeepSeekEmbeddings",
-    "HFLocalEmbeddings",
-]
+__all__ = ["EmbeddingClient", "HFLocalEmbeddings", "OllamaEmbeddings", "DeepSeekEmbeddings"]

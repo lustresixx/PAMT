@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Any, Dict, List
 
 
 @dataclass
@@ -17,7 +17,7 @@ class UpdateConfig:
 @dataclass
 class PreferenceConfig:
     length_history: int = 5
-    tone_labels: List[str] = field(default_factory=lambda: ["neutral", "friendly", "formal", "casual"])
+    tone_labels: List[str] = field(default_factory=lambda: ["humorous", "serious", "gentle", "neutral"])
     emotion_labels: List[str] = field(default_factory=lambda: ["neutral", "joy", "sadness", "anger", "fear"])
     density_bins: List[float] = field(default_factory=lambda: [0.2, 0.6])
     length_bins: List[float] = field(default_factory=lambda: [0.3, 0.6])
@@ -26,26 +26,27 @@ class PreferenceConfig:
 
 @dataclass
 class ModelConfig:
-    provider: str = "ollama"  # "ollama" | "deepseek" | "local"
-    model_name: str = "qwen2.5:3b"
-    ollama_url: str = "http://localhost:11434/api/generate"
-    # DeepSeek (OpenAI-compatible) settings.
+    """DeepSeek (OpenAI-compatible) settings."""
+    provider: str = "deepseek"
+    model_name: str = "deepseek-chat"
     api_base_url: str = "https://api.deepseek.com/v1"
     api_key: str = ""
     request_timeout: int = 600
+    ollama_url: str = "http://localhost:11434/api/generate"
 
 
 @dataclass
 class EmbeddingConfig:
-    provider: str = "ollama"  # "ollama" | "deepseek" | "hf"
-    model_name: str = "nomic-embed-text"
-    ollama_url: str = "http://localhost:11434/api/embeddings"
+    """HF local embedding settings (single embedding model)."""
+    provider: str = "hf"
+    model_name: str = "facebook/contriever"
     api_base_url: str = "https://api.deepseek.com/v1"
     api_key: str = ""
-    request_timeout: int = 600
+    ollama_url: str = "http://localhost:11434/api/embeddings"
     hf_device: str | None = None  # e.g. "cpu", "cuda", "cuda:0"
     hf_max_length: int = 256
     hf_normalize: bool = True
+    hf_cache_dir: str | None = None
 
 
 @dataclass
