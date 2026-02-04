@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-import importlib
+import json
+import logging
+import os
+import urllib.request
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from ..config import PreferenceConfig
@@ -12,81 +15,27 @@ EmotionModel = Callable[[str], CategoryWithProb]
 FormalityModel = Callable[[str], float]
 OpenIEModel = Callable[[str], List[Tuple[str, str, str]]]
 
+logger = logging.getLogger(__name__)
 
-DEFAULT_TONE_MODEL_ID = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+
+DEFAULT_TONE_MODEL_ID = "FacebookAI/roberta-large-mnli"
 DEFAULT_EMOTION_MODEL_ID = "skep_ernie_1.0_large_ch"
 DEFAULT_FORMALITY_MODEL_ID = "s-nlp/roberta-base-formality-ranker"
 DEFAULT_DENSITY_MODEL_ID = "wiki80_bert_softmax"
-DEFAULT_GLINER_MODEL_ID = "urchade/gliner_small-v2.1"
 
-
-DEFAULT_GLINER_LABELS = [
-    "person",
-    "organization",
-    "location",
-    "date",
-    "time",
-    "event",
-    "product",
-    "work_of_art",
-    "law",
-    "language",
-    "quantity",
-    "money",
-    "percent",
-    "facility",
-    "nationality",
-    "religion",
-    "url",
-    "email",
-    "phone",
-    "role",
-    "title",
-]
-
-
-GO_EMOTION_MAP: Dict[str, str] = {
-    "admiration": "joy",
-    "amusement": "joy",
-    "anger": "anger",
-    "annoyance": "anger",
-    "approval": "joy",
-    "caring": "joy",
-    "confusion": "neutral",
-    "curiosity": "neutral",
-    "desire": "joy",
-    "disappointment": "sadness",
-    "disapproval": "anger",
-    "disgust": "anger",
-    "embarrassment": "sadness",
-    "excitement": "joy",
-    "fear": "fear",
-    "gratitude": "joy",
-    "grief": "sadness",
-    "joy": "joy",
-    "love": "joy",
-    "nervousness": "fear",
-    "neutral": "neutral",
-    "optimism": "joy",
-    "pride": "joy",
-    "realization": "neutral",
-    "relief": "joy",
-    "remorse": "sadness",
-    "sadness": "sadness",
-    "surprise": "neutral",
-}
 
 TONE_LABEL_ALIASES: Dict[str, str] = {
-    "humor": "humor",
-    "humorous": "humor",
-    "funny": "humor",
-    "sarcasm": "humor",
-    "irony": "humor",
+    "humor": "humorous",
+    "humorous": "humorous",
+    "funny": "humorous",
+    "sarcasm": "humorous",
+    "irony": "humorous",
     "serious": "serious",
+    "gentle": "gentle",
     "neutral": "neutral",
-    "formal": "formal",
-    "casual": "casual",
-    "friendly": "friendly",
+    "formal": "serious",
+    "casual": "humorous",
+    "friendly": "gentle",
 }
 
 EMOTION_LABEL_ALIASES: Dict[str, str] = {
@@ -96,122 +45,43 @@ EMOTION_LABEL_ALIASES: Dict[str, str] = {
 }
 
 
-def build_hf_tone_model(
-    config: PreferenceConfig,
-    model_id: str = DEFAULT_TONE_MODEL_ID,
-    device: Optional[int | str] = None,
-    max_length: int = 256,
-) -> ToneModel:
-    # REAL MODEL: HuggingFace classifier for irony/sarcasm detection.
-    transformers = _require_optional("transformers")
-    classifier = transformers.pipeline(
-        "text-classification",
-        model=model_id,
-        tokenizer=model_id,
-        device=device,
-        framework="pt",
-    )
-
-    def tone_model(text: str) -> CategoryWithProb:
-        scores = _pipeline_scores(classifier, text, max_length)
-        return _irony_scores_to_tone(scores, config.tone_labels)
-
-    return tone_model
-
-
-def build_hf_emotion_model(
-    config: PreferenceConfig,
-    model_id: str = DEFAULT_EMOTION_MODEL_ID,
-    device: Optional[int | str] = None,
-    max_length: int = 256,
-) -> EmotionModel:
-    # REAL MODEL: HuggingFace GoEmotions classifier (maps to base labels).
-    transformers = _require_optional("transformers")
-    classifier = transformers.pipeline(
-        "text-classification",
-        model=model_id,
-        tokenizer=model_id,
-        device=device,
-        framework="pt",
-    )
-
-    def emotion_model(text: str) -> CategoryWithProb:
-        scores = _pipeline_scores(classifier, text, max_length)
-        return _go_emotion_scores_to_distribution(scores, config.emotion_labels)
-
-    return emotion_model
-
-
-def build_hf_formality_model(
-    model_id: str = DEFAULT_FORMALITY_MODEL_ID,
-    device: Optional[int | str] = None,
-    max_length: int = 256,
-) -> FormalityModel:
-    # REAL MODEL: HuggingFace formality ranker (continuous 0-1 score).
-    transformers = _require_optional("transformers")
-    torch = _require_optional("torch")
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
-    model = transformers.AutoModelForSequenceClassification.from_pretrained(model_id)
-    model.eval()
-    torch_device = _resolve_torch_device(torch, device)
-    model.to(torch_device)
-
-    def formality_model(text: str) -> float:
-        inputs = tokenizer(text, truncation=True, max_length=max_length, return_tensors="pt")
-        inputs = {k: v.to(torch_device) for k, v in inputs.items()}
-        with torch.no_grad():
-            logits = model(**inputs).logits
-        score = _formality_score_from_logits(logits, model.config, torch)
-        return _clamp(score)
-
-    return formality_model
-
-
-def build_gliner_openie_model(
-    model_id: str = DEFAULT_GLINER_MODEL_ID,
-    labels: Optional[List[str]] = None,
-    threshold: float = 0.5,
-    max_entities: int = 64,
-    max_text_tokens: int = 384,
-    device: Optional[int | str] = None,
-) -> OpenIEModel:
-    # REAL MODEL: GLiNER entity extractor used as an OpenIE-like triple source.
-    gliner = _require_optional("gliner")
-    model = gliner.GLiNER.from_pretrained(model_id)
-    if device is not None and hasattr(model, "to"):
-        try:
-            model.to(device)
-        except Exception:
-            pass
-    label_set = labels or list(DEFAULT_GLINER_LABELS)
-
-    def openie_model(text: str) -> List[Tuple[str, str, str]]:
-        text = _truncate_text(text, max_text_tokens)
-        entities = model.predict_entities(text, label_set, threshold=threshold)
-        triples: List[Tuple[str, str, str]] = []
-        for ent in entities[:max_entities]:
-            ent_text, ent_label = _extract_entity(ent)
-            if not ent_text or not ent_label:
-                continue
-            triples.append((ent_text, "is", ent_label))
-        return triples
-
-    return openie_model
-
-
 def build_roberta_tone_model(
     config: PreferenceConfig,
     model_id: str = DEFAULT_TONE_MODEL_ID,
     device: Optional[int | str] = None,
     max_length: int = 256,
+    cache_dir: str | None = None,
 ) -> ToneModel:
-    # Preferred: RoBERTa encoder + multi-class head for tone style.
+    """RoBERTa encoder + classification head for tone style (paper model)."""
     transformers = _require_optional("transformers")
+    torch = _require_optional("torch")
+    token = _get_hf_token()
+    cache_dir = _get_hf_cache_dir(cache_dir)
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_id,
+        token=token,
+        cache_dir=cache_dir,
+    )
+    model = transformers.AutoModelForSequenceClassification.from_pretrained(
+        model_id,
+        token=token,
+        cache_dir=cache_dir,
+    )
+    if device is None:
+        device_id = 0 if torch.cuda.is_available() else -1
+    elif isinstance(device, int):
+        device_id = device if device >= 0 else -1
+    else:
+        device_str = str(device).lower()
+        if device_str.startswith("cuda") or device_str.startswith("gpu"):
+            device_id = 0
+        else:
+            device_id = -1
     classifier = transformers.pipeline(
         "text-classification",
-        model=model_id,
-        tokenizer=model_id,
-        device=device,
+        model=model,
+        tokenizer=tokenizer,
+        device=device_id,
         framework="pt",
     )
 
@@ -228,45 +98,93 @@ def build_skep_emotion_model(
     model_id: str = DEFAULT_EMOTION_MODEL_ID,
     device: Optional[int | str] = None,
 ) -> EmotionModel:
-    # Preferred: SKEP for emotional tone (sentiment) classification.
-    paddlenlp = _require_optional("paddlenlp")
+    """SKEP emotional tone classifier (paper model)."""
+    _require_optional("paddlenlp")
     try:
-        from paddlenlp import Taskflow
-    except ImportError as exc:
-        raise ImportError("Missing paddlenlp Taskflow for SKEP emotion model.") from exc
-
-    try:
-        sentiment = Taskflow("sentiment_analysis", model=model_id, device=device)
-    except TypeError:
-        sentiment = Taskflow("sentiment_analysis", model=model_id)
+        paddle = _require_optional("paddle")
+        tokenizer, model = _load_skep_taskflow_model(model_id, device, paddle)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to initialize SKEP emotion model: {exc}") from exc
 
     def emotion_model(text: str) -> CategoryWithProb:
-        raw = sentiment(text)
-        scores = _extract_label_scores(raw)
+        inputs = _skep_tokenize(tokenizer, text)
+        inputs = {k: paddle.to_tensor([v]) for k, v in inputs.items() if v is not None}
+        with paddle.no_grad():
+            _idx, probs = model(**inputs)
+        probs_list = probs.numpy()[0].tolist()
+        scores = [
+            {"label": "negative", "score": float(probs_list[0])},
+            {"label": "positive", "score": float(probs_list[1])},
+        ]
         probs = _scores_to_distribution(scores, config.emotion_labels, EMOTION_LABEL_ALIASES)
         return _argmax(probs), probs
 
     return emotion_model
 
 
+def build_hf_formality_model(
+    model_id: str = DEFAULT_FORMALITY_MODEL_ID,
+    device: Optional[int | str] = None,
+    max_length: int = 256,
+    cache_dir: str | None = None,
+) -> FormalityModel:
+    """Formality classifier (paper model)."""
+    transformers = _require_optional("transformers")
+    torch = _require_optional("torch")
+    token = _get_hf_token()
+    cache_dir = _get_hf_cache_dir(cache_dir)
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_id,
+        token=token,
+        cache_dir=cache_dir,
+    )
+    model = transformers.AutoModelForSequenceClassification.from_pretrained(
+        model_id,
+        token=token,
+        cache_dir=cache_dir,
+    )
+    model.eval()
+    torch_device = _resolve_torch_device(torch, device)
+    model.to(torch_device)
+
+    def formality_model(text: str) -> float:
+        inputs = tokenizer(text, truncation=True, max_length=max_length, return_tensors="pt")
+        inputs = {k: v.to(torch_device) for k, v in inputs.items()}
+        with torch.no_grad():
+            logits = model(**inputs).logits
+        score = _formality_score_from_logits(logits, model.config, torch)
+        return _clamp(score)
+
+    return formality_model
+
+
 def build_opennre_openie_model(
     model_id: str = DEFAULT_DENSITY_MODEL_ID,
     *,
+    device: Optional[int | str] = None,
     max_pairs: int = 64,
     max_entities: int = 32,
     max_text_tokens: int = 384,
     spacy_model: str = "en_core_web_sm",
 ) -> OpenIEModel:
-    # Preferred: OpenNRE-based relation extraction for information density.
+    """OpenNRE-based relation extraction for information density (paper model)."""
+    _ensure_home_env()
+    _ensure_opennre_assets(model_id)
     opennre = _require_optional("opennre")
-    model = opennre.get_model(model_id)
+    model = _load_opennre_model(opennre, model_id)
+    torch = _require_optional("torch")
+    torch_device = _resolve_torch_device(torch, device)
+    if hasattr(model, "to"):
+        model.to(torch_device)
+    if hasattr(model, "device"):
+        try:
+            model.device = torch_device
+        except Exception:
+            pass
+    if hasattr(model, "eval"):
+        model.eval()
 
-    nlp = None
-    try:
-        spacy = _require_optional("spacy")
-        nlp = spacy.load(spacy_model)
-    except Exception:
-        nlp = None
+    nlp = _load_spacy_model(spacy_model)
 
     def openie_model(text: str) -> List[Tuple[str, str, str]]:
         text = _truncate_text(text, max_text_tokens)
@@ -388,59 +306,6 @@ def _extract_label_scores(raw: Any) -> List[Dict[str, float]]:
     return scores
 
 
-def _irony_scores_to_tone(scores: List[Dict[str, float]], labels: List[str]) -> CategoryWithProb:
-    if not labels:
-        return 0, []
-    irony_score = 0.0
-    non_irony_score = 0.0
-    for item in scores:
-        label = item["label"].lower().replace("-", "_")
-        if "irony" in label or "sarcasm" in label:
-            if "non" in label or "not" in label:
-                non_irony_score += item["score"]
-            else:
-                irony_score += item["score"]
-    if irony_score == 0.0 and non_irony_score == 0.0 and scores:
-        top = max(scores, key=lambda s: s["score"])
-        label = top["label"].lower().replace("-", "_")
-        if "irony" in label or "sarcasm" in label:
-            irony_score = top["score"]
-        else:
-            non_irony_score = top["score"]
-    probs = [0.0] * len(labels)
-    if irony_score > 0.0:
-        idx = _pick_label_index(labels, ["casual", "friendly", "neutral"])
-        probs[idx] += irony_score
-    if non_irony_score > 0.0:
-        idx = _pick_label_index(labels, ["formal", "neutral"])
-        probs[idx] += non_irony_score
-    probs = _normalize_probs(probs)
-    return _argmax(probs), probs
-
-
-def _go_emotion_scores_to_distribution(
-    scores: List[Dict[str, float]], labels: List[str]
-) -> CategoryWithProb:
-    if not labels:
-        return 0, []
-    label_to_idx = {label: idx for idx, label in enumerate(labels)}
-    probs = [0.0] * len(labels)
-    for item in scores:
-        label = item["label"].lower().replace("-", "_")
-        mapped = GO_EMOTION_MAP.get(label)
-        if mapped is None:
-            continue
-        idx = label_to_idx.get(mapped)
-        if idx is None:
-            continue
-        probs[idx] += item["score"]
-    if sum(probs) == 0.0:
-        fallback_idx = _pick_label_index(labels, ["neutral"])
-        probs[fallback_idx] = 1.0
-    probs = _normalize_probs(probs)
-    return _argmax(probs), probs
-
-
 def _formality_score_from_logits(logits: Any, config: Any, torch: Any) -> float:
     if logits.shape[-1] == 1:
         score = torch.sigmoid(logits).squeeze().item()
@@ -452,7 +317,6 @@ def _formality_score_from_logits(logits: Any, config: Any, torch: Any) -> float:
     informal_idx = _find_informal_label_idx(getattr(config, "id2label", None))
     if informal_idx is not None and 0 <= informal_idx < probs.shape[-1]:
         return float(1.0 - probs[informal_idx].item())
-    # Fallback: assume label 1 is formal if present, else use label 0.
     if probs.shape[-1] > 1:
         return float(probs[1].item())
     return float(probs[0].item())
@@ -491,27 +355,16 @@ def _extract_entities(
     *,
     max_entities: int = 32,
 ) -> List[Tuple[int, int, str]]:
+    if nlp is None:
+        raise RuntimeError("spaCy model is required for OpenNRE entity extraction.")
     token_spans = _token_spans(text)
     entities: List[Tuple[int, int, str]] = []
-    if nlp is not None:
-        try:
-            doc = nlp(text)
-            for ent in getattr(doc, "ents", [])[:max_entities]:
-                token_range = _char_span_to_token_range(token_spans, ent.start_char, ent.end_char)
-                if token_range is None:
-                    continue
-                entities.append((token_range[0], token_range[1], ent.text))
-            if entities:
-                return entities
-        except Exception:
-            pass
-    # Fallback: capitalized tokens as coarse entities.
-    tokens = [span[2] for span in token_spans]
-    for idx, tok in enumerate(tokens):
-        if tok[:1].isupper():
-            entities.append((idx, idx + 1, tok))
-            if len(entities) >= max_entities:
-                break
+    doc = nlp(text)
+    for ent in getattr(doc, "ents", [])[:max_entities]:
+        token_range = _char_span_to_token_range(token_spans, ent.start_char, ent.end_char)
+        if token_range is None:
+            continue
+        entities.append((token_range[0], token_range[1], ent.text))
     return entities
 
 
@@ -546,16 +399,6 @@ def _char_span_to_token_range(
     return start_idx, end_idx
 
 
-def _extract_entity(entity: Any) -> Tuple[str, str]:
-    if isinstance(entity, dict):
-        return str(entity.get("text", "")), str(entity.get("label", ""))
-    if hasattr(entity, "text") and hasattr(entity, "label"):
-        return str(getattr(entity, "text", "")), str(getattr(entity, "label", ""))
-    if isinstance(entity, (list, tuple)) and len(entity) >= 2:
-        return str(entity[0]), str(entity[1])
-    return "", ""
-
-
 def _truncate_text(text: str, max_tokens: int) -> str:
     if max_tokens <= 0 or not text:
         return text
@@ -573,13 +416,6 @@ def _argmax(values: List[float]) -> int:
     if not values:
         return 0
     return max(range(len(values)), key=values.__getitem__)
-
-
-def _pick_label_index(labels: List[str], prefer: Iterable[str]) -> int:
-    for label in prefer:
-        if label in labels:
-            return labels.index(label)
-    return 0
 
 
 def _normalize_probs(probs: List[float]) -> List[float]:
@@ -605,11 +441,333 @@ def _resolve_torch_device(torch: Any, device: Optional[int | str]) -> Any:
     return torch.device(device)
 
 
-def _require_optional(module_name: str) -> Any:
+def _ensure_home_env() -> None:
+    if os.environ.get("HOME"):
+        return
+    home = os.environ.get("USERPROFILE")
+    if not home:
+        drive = os.environ.get("HOMEDRIVE")
+        path = os.environ.get("HOMEPATH")
+        if drive and path:
+            home = drive + path
+    if not home:
+        try:
+            from pathlib import Path
+
+            home = str(Path.home())
+        except Exception:
+            home = None
+    if home:
+        os.environ["HOME"] = home
+
+
+def _ensure_paddlenlp_static_model(model_id: str) -> None:
     try:
-        return importlib.import_module(module_name)
-    except ImportError as exc:
-        raise ImportError(
-            f"Missing optional dependency '{module_name}'. "
-            "Install transformers, torch, paddlenlp, opennre, spacy, and gliner to use model-backed extractors."
-        ) from exc
+        from paddlenlp.utils.env import PPNLP_HOME
+    except Exception:
+        return
+    task_path = os.path.join(PPNLP_HOME, "taskflow", "sentiment_analysis", model_id)
+    static_dir = os.path.join(task_path, "static")
+    pdiparams = os.path.join(static_dir, "inference.pdiparams")
+    pdmodel = os.path.join(static_dir, "inference.pdmodel")
+    if os.path.exists(pdiparams) and not os.path.exists(pdmodel):
+        try:
+            os.remove(pdiparams)
+        except OSError:
+            pass
+
+
+def _load_skep_taskflow_model(model_id: str, device: Optional[int | str], paddle: Any):
+    from paddlenlp.taskflow.sentiment_analysis import SkepTask
+    from paddlenlp.taskflow.utils import download_file
+    from paddlenlp.taskflow.models.sentiment_analysis_model import SkepSequenceModel
+    from paddlenlp.transformers import SkepConfig, SkepTokenizer
+    from paddlenlp.utils.env import PPNLP_HOME
+
+    _set_paddle_device(device, paddle)
+
+    task_path = os.path.join(PPNLP_HOME, "taskflow", "sentiment_analysis", model_id)
+    os.makedirs(task_path, exist_ok=True)
+
+    for file_id, file_name in SkepTask.resource_files_names.items():
+        if model_id not in SkepTask.resource_files_urls:
+            continue
+        if file_id not in SkepTask.resource_files_urls[model_id]:
+            continue
+        url, md5 = SkepTask.resource_files_urls[model_id][file_id]
+        target = os.path.join(task_path, file_name)
+        if not os.path.exists(target):
+            download_file(task_path, file_name, url, md5)
+
+    state_path = os.path.join(task_path, "model_state.pdparams")
+    state = paddle.load(state_path)
+    num_labels = _infer_num_labels(state)
+
+    config = SkepConfig.from_pretrained(model_id)
+    config.num_labels = num_labels
+
+    model = SkepSequenceModel(config)
+    model.set_state_dict(state)
+    model.eval()
+
+    tokenizer = SkepTokenizer.from_pretrained(model_id)
+    return tokenizer, model
+
+
+def _infer_num_labels(state: Dict[str, Any]) -> int:
+    weight = state.get("classifier.weight")
+    if weight is None:
+        return 2
+    try:
+        shape = list(weight.shape)
+        if len(shape) == 2:
+            if shape[0] <= 10:
+                return int(shape[0])
+            if shape[1] <= 10:
+                return int(shape[1])
+        return int(shape[-1])
+    except Exception:
+        return 2
+
+
+def _set_paddle_device(device: Optional[int | str], paddle: Any) -> None:
+    if device is None:
+        if getattr(paddle, "is_compiled_with_cuda", lambda: False)():
+            paddle.set_device("gpu")
+        else:
+            paddle.set_device("cpu")
+        return
+    if isinstance(device, int):
+        if device >= 0 and getattr(paddle, "is_compiled_with_cuda", lambda: False)():
+            paddle.set_device(f"gpu:{device}")
+        else:
+            paddle.set_device("cpu")
+        return
+    device_str = str(device).lower()
+    if device_str.startswith("cuda"):
+        device_str = device_str.replace("cuda", "gpu", 1)
+    if device_str.startswith("gpu") or device_str == "cpu":
+        paddle.set_device(device_str)
+    else:
+        paddle.set_device("cpu")
+
+
+def _skep_tokenize(tokenizer: Any, text: str) -> Dict[str, Any]:
+    try:
+        return tokenizer(text, max_length=256, truncation=True)
+    except TypeError:
+        try:
+            return tokenizer(text, max_seq_len=256)
+        except TypeError:
+            return tokenizer(text)
+
+
+def _load_spacy_model(model_name: str):
+    spacy = _require_optional("spacy")
+    try:
+        return spacy.load(model_name)
+    except Exception as exc:
+        try:
+            from spacy.cli import download as spacy_download
+
+            spacy_download(model_name)
+            return spacy.load(model_name)
+        except Exception as download_exc:
+            raise RuntimeError(
+                f"spaCy model '{model_name}' is required for OpenNRE; "
+                f"run: python -m spacy download {model_name}"
+            ) from download_exc
+
+
+def _ensure_opennre_assets(model_id: str) -> None:
+    _ensure_home_env()
+    root_path = os.path.join(os.environ.get("HOME") or "", ".opennre")
+    if not root_path:
+        raise RuntimeError("OpenNRE HOME path not set.")
+    _ensure_dir(os.path.join(root_path, "benchmark", "wiki80"))
+    _ensure_dir(os.path.join(root_path, "pretrain", "nre"))
+    _ensure_dir(os.path.join(root_path, "pretrain", "bert-base-uncased"))
+    _ensure_dir(os.path.join(root_path, "pretrain", "glove"))
+
+    base = "https://thunlp.oss-cn-qingdao.aliyuncs.com/opennre"
+    _download_if_missing(
+        f"{base}/benchmark/wiki80/wiki80_rel2id.json",
+        os.path.join(root_path, "benchmark", "wiki80", "wiki80_rel2id.json"),
+    )
+
+    if model_id in {"wiki80_bert_softmax", "wiki80_bertentity_softmax"}:
+        _download_if_missing(
+            f"{base}/pretrain/nre/{model_id}.pth.tar",
+            os.path.join(root_path, "pretrain", "nre", f"{model_id}.pth.tar"),
+        )
+        _download_if_missing(
+            f"{base}/pretrain/bert-base-uncased/config.json",
+            os.path.join(root_path, "pretrain", "bert-base-uncased", "config.json"),
+        )
+        _download_if_missing(
+            f"{base}/pretrain/bert-base-uncased/pytorch_model.bin",
+            os.path.join(root_path, "pretrain", "bert-base-uncased", "pytorch_model.bin"),
+        )
+        _download_if_missing(
+            f"{base}/pretrain/bert-base-uncased/vocab.txt",
+            os.path.join(root_path, "pretrain", "bert-base-uncased", "vocab.txt"),
+        )
+    elif model_id == "wiki80_cnn_softmax":
+        _download_if_missing(
+            f"{base}/pretrain/nre/{model_id}.pth.tar",
+            os.path.join(root_path, "pretrain", "nre", f"{model_id}.pth.tar"),
+        )
+        _download_if_missing(
+            f"{base}/pretrain/glove/glove.6B.50d_word2id.json",
+            os.path.join(root_path, "pretrain", "glove", "glove.6B.50d_word2id.json"),
+        )
+        _download_if_missing(
+            f"{base}/pretrain/glove/glove.6B.50d_mat.npy",
+            os.path.join(root_path, "pretrain", "glove", "glove.6B.50d_mat.npy"),
+        )
+
+
+def _ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
+
+
+def _download_if_missing(url: str, dest: str) -> None:
+    if os.path.exists(dest):
+        return
+    _ensure_dir(os.path.dirname(dest))
+    logger.info("Downloading OpenNRE asset: %s", url)
+    urllib.request.urlretrieve(url, dest)
+
+
+def _load_opennre_model(opennre: Any, model_id: str) -> Any:
+    try:
+        return opennre.get_model(model_id)
+    except RuntimeError as exc:
+        message = str(exc)
+        if "Unexpected key(s) in state_dict" not in message or "position_ids" not in message:
+            raise
+        logger.warning("OpenNRE checkpoint mismatch detected; reloading with strict=False.")
+    except Exception:
+        logger.warning("OpenNRE get_model failed; attempting manual load.", exc_info=True)
+
+    torch = _require_optional("torch")
+    root_path = os.path.join(os.environ.get("HOME") or "", ".opennre")
+    if not root_path:
+        raise RuntimeError("OpenNRE HOME path not set.")
+
+    ckpt = os.path.join(root_path, "pretrain", "nre", f"{model_id}.pth.tar")
+    state = torch.load(ckpt, map_location="cpu")
+    state_dict = state.get("state_dict") if isinstance(state, dict) else state
+    if not isinstance(state_dict, dict):
+        raise RuntimeError("OpenNRE checkpoint is missing a state_dict.")
+
+    if model_id in {"wiki80_bert_softmax", "wiki80_bertentity_softmax"}:
+        rel2id_path = os.path.join(root_path, "benchmark", "wiki80", "wiki80_rel2id.json")
+        with open(rel2id_path, encoding="utf-8") as handle:
+            rel2id = json.load(handle)
+        pretrain_path = os.path.join(root_path, "pretrain", "bert-base-uncased")
+        if "entity" in model_id:
+            sentence_encoder = opennre.encoder.BERTEntityEncoder(
+                max_length=80,
+                pretrain_path=pretrain_path,
+            )
+        else:
+            sentence_encoder = opennre.encoder.BERTEncoder(
+                max_length=80,
+                pretrain_path=pretrain_path,
+            )
+        model = opennre.model.SoftmaxNN(sentence_encoder, len(rel2id), rel2id)
+        _load_state_dict_relaxed(model, state_dict)
+        return model
+
+    if model_id in {"tacred_bert_softmax", "tacred_bertentity_softmax"}:
+        rel2id_path = os.path.join(root_path, "benchmark", "tacred", "tacred_rel2id.json")
+        with open(rel2id_path, encoding="utf-8") as handle:
+            rel2id = json.load(handle)
+        pretrain_path = os.path.join(root_path, "pretrain", "bert-base-uncased")
+        if "entity" in model_id:
+            sentence_encoder = opennre.encoder.BERTEntityEncoder(
+                max_length=80,
+                pretrain_path=pretrain_path,
+            )
+        else:
+            sentence_encoder = opennre.encoder.BERTEncoder(
+                max_length=80,
+                pretrain_path=pretrain_path,
+            )
+        model = opennre.model.SoftmaxNN(sentence_encoder, len(rel2id), rel2id)
+        _load_state_dict_relaxed(model, state_dict)
+        return model
+
+    return opennre.get_model(model_id)
+
+
+def _load_state_dict_relaxed(model: Any, state_dict: Dict[str, Any]) -> None:
+    for key in [k for k in state_dict.keys() if k.endswith("position_ids")]:
+        state_dict.pop(key, None)
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if missing or unexpected:
+        logger.warning("OpenNRE state_dict loaded with missing=%s unexpected=%s", missing, unexpected)
+
+
+def _require_optional(package: str) -> Any:
+    try:
+        if package == "transformers":
+            return _import_transformers_no_torchvision()
+        if package == "opennre":
+            _import_transformers_no_torchvision()
+            return __import__(package)
+        return __import__(package)
+    except Exception as exc:
+        raise ImportError(f"Missing dependency: {package}") from exc
+
+
+def _import_transformers_no_torchvision() -> Any:
+    import importlib.util
+    import sys
+
+    _ensure_hf_endpoint()
+
+    if "transformers" in sys.modules:
+        return __import__("transformers")
+
+    # Block torchvision before torch is imported to avoid conflicts
+    original_find_spec = importlib.util.find_spec
+
+    def _patched_find_spec(name: str, package: str | None = None):
+        if name == "torchvision" or (isinstance(name, str) and name.startswith("torchvision.")):
+            return None
+        return original_find_spec(name, package)
+
+    importlib.util.find_spec = _patched_find_spec
+
+    try:
+        return __import__("transformers")
+    finally:
+        importlib.util.find_spec = original_find_spec
+
+
+def _get_hf_token() -> str | bool | None:
+    token = (
+        os.environ.get("PAMT_HF_TOKEN")
+        or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+        or os.environ.get("HF_TOKEN")
+    )
+    if not token:
+        os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+        return False
+    return token
+
+
+def _get_hf_cache_dir(explicit: str | None) -> str | None:
+    if explicit:
+        return explicit
+    if os.environ.get("HF_HOME"):
+        return None
+    return os.environ.get("PAMT_HF_CACHE_DIR")
+
+
+def _ensure_hf_endpoint() -> None:
+    endpoint = os.environ.get("PAMT_HF_ENDPOINT")
+    if endpoint:
+        os.environ.setdefault("HF_ENDPOINT", endpoint)

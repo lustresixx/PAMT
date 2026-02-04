@@ -36,3 +36,4 @@ Thumbs.db
 /data/pamt_memory.json
 
 config/api_config.json
+example/benchmark/results

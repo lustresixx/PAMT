@@ -1,4 +1,4 @@
-from .preference_extractor import ExtractionState, HeuristicPreferenceExtractor, ModelPreferenceExtractor
+from .preference_extractor import ExtractionState, ModelPreferenceExtractor
 from .preference_models import (
     DEFAULT_DENSITY_MODEL_ID,
     DEFAULT_EMOTION_MODEL_ID,
@@ -8,7 +8,6 @@ from .preference_models import (
 
 __all__ = [
     "ExtractionState",
-    "HeuristicPreferenceExtractor",
     "ModelPreferenceExtractor",
     "DEFAULT_TONE_MODEL_ID",
     "DEFAULT_EMOTION_MODEL_ID",

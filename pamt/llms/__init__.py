@@ -1,3 +1,3 @@
-from .models import DeepSeekLLM, DummyLLM, LLM, OllamaLLM
+from .models import DeepSeekLLM, LLM, OllamaLLM
 
-__all__ = ["LLM", "OllamaLLM", "DeepSeekLLM", "DummyLLM"]
+__all__ = ["LLM", "DeepSeekLLM", "OllamaLLM"]

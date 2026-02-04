@@ -23,44 +23,6 @@ class LLM(Protocol):
 
 
 @dataclass
-class OllamaLLM:
-    config: ModelConfig
-    last_usage: LLMUsage | None = None
-
-    def generate(self, prompt: str) -> str:
-        payload = {
-            "model": self.config.model_name,
-            "prompt": prompt,
-            "stream": False,
-        }
-        data = json.dumps(payload).encode("utf-8")
-        req = request.Request(
-            self.config.ollama_url,
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with request.urlopen(req, timeout=self.config.request_timeout) as resp:
-            body = resp.read().decode("utf-8")
-        try:
-            parsed = json.loads(body)
-        except json.JSONDecodeError:
-            self.last_usage = None
-            return body
-        prompt_tokens = _to_int(parsed.get("prompt_eval_count"))
-        completion_tokens = _to_int(parsed.get("eval_count"))
-        total_tokens = None
-        if prompt_tokens is not None and completion_tokens is not None:
-            total_tokens = prompt_tokens + completion_tokens
-        self.last_usage = LLMUsage(
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-        )
-        return parsed.get("response", "")
-
-
-@dataclass
 class DeepSeekLLM:
     config: ModelConfig
     last_usage: LLMUsage | None = None
@@ -95,19 +57,37 @@ class DeepSeekLLM:
 
 
 @dataclass
-class DummyLLM:
-    """Mock LLM used for smoke tests (no real model call)."""
-    response: str = "OK"
+class OllamaLLM:
+    config: ModelConfig
     last_usage: LLMUsage | None = None
 
     def generate(self, prompt: str) -> str:
-        completion_tokens = len(self.response.split())
-        self.last_usage = LLMUsage(
-            prompt_tokens=len(prompt.split()),
-            completion_tokens=completion_tokens,
-            total_tokens=len(prompt.split()) + completion_tokens,
+        payload = {
+            "model": self.config.model_name,
+            "prompt": prompt,
+            "stream": False,
+        }
+        data = json.dumps(payload).encode("utf-8")
+        req = request.Request(
+            self.config.ollama_url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
-        return self.response
+        with request.urlopen(req, timeout=self.config.request_timeout) as resp:
+            body = resp.read().decode("utf-8")
+        parsed = json.loads(body)
+        prompt_tokens = _to_int(parsed.get("prompt_eval_count"))
+        completion_tokens = _to_int(parsed.get("eval_count"))
+        total_tokens = None
+        if prompt_tokens is not None or completion_tokens is not None:
+            total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
+        self.last_usage = LLMUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
+        return parsed.get("response", "")
 
 
 def _to_int(value: object) -> int | None:

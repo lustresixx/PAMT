@@ -13,8 +13,8 @@ from .extractors.preference_extractor import (
     PreferenceExtractor,
     build_preference_extractor,
 )
-from .embeddings.models import DeepSeekEmbeddings, EmbeddingClient, HFLocalEmbeddings, OllamaEmbeddings
-from .llms.models import DeepSeekLLM, LLM, OllamaLLM
+from .embeddings.models import EmbeddingClient, HFLocalEmbeddings
+from .llms.models import DeepSeekLLM, LLM
 
 
 def _build_prompt_source(history: List[str], user_text: str) -> str:
@@ -34,21 +34,11 @@ def _build_retrieval_source(history: List[str], user_text: str, max_turns: int =
 
 
 def _build_llm(config: ModelConfig) -> LLM:
-    if config.provider == "ollama":
-        return OllamaLLM(config)
-    if config.provider == "deepseek":
-        return DeepSeekLLM(config)
-    raise ValueError(f"Unsupported LLM provider: {config.provider}")
+    return DeepSeekLLM(config)
 
 
 def _build_embedder(config: EmbeddingConfig) -> EmbeddingClient:
-    if config.provider == "ollama":
-        return OllamaEmbeddings(config)
-    if config.provider == "deepseek":
-        return DeepSeekEmbeddings(config)
-    if config.provider == "hf":
-        return HFLocalEmbeddings(config)
-    raise ValueError(f"Unsupported embedding provider: {config.provider}")
+    return HFLocalEmbeddings(config)
 
 
 @dataclass
@@ -190,7 +180,6 @@ def create_memory_plugin(
     preference_config: PreferenceConfig | None = None,
     update_config: UpdateConfig | None = None,
     retrieval_config: RetrievalConfig | None = None,
-    prefer_model_extractor: bool = True,
     label_prompt_path: str = "prompts/category_leaf.txt",
     leaf_prompt_path: str = "prompts/leaf_only.txt",
     merge_prompt_path: str = "prompts/leaf_merge_summary.txt",
@@ -202,7 +191,7 @@ def create_memory_plugin(
 
     llm = _build_llm(model_config)
     embedder = _build_embedder(embedding_config)
-    extractor = build_preference_extractor(pref_config, prefer_model=prefer_model_extractor)
+    extractor = build_preference_extractor(pref_config)
 
     tree = HierarchicalMemoryTree(
         update_config=upd_config,

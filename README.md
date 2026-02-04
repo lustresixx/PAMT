@@ -1,19 +1,17 @@
-**English** | [中文](README_zh.md)
+﻿**English** | [中文](README_zh.md)
 # PAMT: Preference-Aware Memory Tree
 Project name: **PAMT (Preference-Aware Memory Tree)**. The Python package name is `pamt`.
 
-A practical, runnable scaffold for preference-aware personalization with a memory tree. It learns user style signals over time and injects them into prompts, while keeping updates stable via SW/EMA fusion.
+A runnable preference-aware personalization system with a memory tree. It extracts preference signals, smooths them via SW/EMA fusion, and injects control prompts for personalized generation.
 
 ---
 
 ## Highlights
 
-- Preference extraction (model-backed with fallback)
+- Paper-aligned preference extraction (RoBERTa + SKEP + OpenNRE + formality)
 - SW/EMA fusion + change detection
 - 3-layer memory tree (root -> category -> leaf)
-- Coarse leaf merging with LLM summaries
-- Visual chatbot UI for inspection/debugging
-- Memory plugin for any external agent
+- Memory plugin for external agents
 - JSON persistence (auto load/create, auto save)
 
 ---
@@ -21,50 +19,30 @@ A practical, runnable scaffold for preference-aware personalization with a memor
 ## Contents
 
 - [Quickstart](#quickstart)
-- [Visual Chatbot](#visual-chatbot)
 - [Memory Plugin (External Agents)](#memory-plugin-external-agents)
 - [System Design](#system-design)
 - [End-to-End Flow](#end-to-end-flow)
 - [Configuration](#configuration)
 - [Project Layout](#project-layout)
-- [Notes](#notes)
 
 ---
 
 ## Quickstart
 
-### CLI Chatbot (with persistence)
+### CLI Chatbot (DeepSeek + HF embeddings)
 
 ```bash
-python example/chatbot.py \
-  --llm-provider ollama --llm-model qwen2.5:3b \
-  --embed-provider ollama --embed-model nomic-embed-text \
+python example/chatbot/chatbot.py \
+  --llm-model deepseek-chat \
+  --deepseek-key YOUR_API_KEY \
+  --embed-model sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 \
   --memory-file data/pamt_memory.json
 ```
 
 ---
 
-## Visual Chatbot
-
-```bash
-python example/visual_chatbot.py \
-  --llm-provider ollama --llm-model qwen2.5:3b \
-  --embed-provider ollama --embed-model nomic-embed-text
-```
-
-Open in browser:
-```text
-http://127.0.0.1:7860
-```
-
-UI features:
-- Toggle Memory Tree vs Baseline
-- Toggle Context On/Off
-- Node Inspector: Fusion / SW / EMA views
-- Debug trace: routing + updates
-![img.png](asset/img.png)
----
-
+### Environment\n\n- PAMT_HF_CACHE_DIR (optional): where HF models are cached/downloaded locally.\n- `PAMT_HF_TOKEN` (optional): Hugging Face access token if your environment requires auth.
+- `PAMT_DEEPSEEK_API_KEY` or `DEEPSEEK_API_KEY`: DeepSeek API key for memory-tree labeling.
 ## Memory Plugin (External Agents)
 
 The plugin exposes a minimal interface:
@@ -75,8 +53,8 @@ The plugin exposes a minimal interface:
 from pamt import create_memory_plugin, ModelConfig, EmbeddingConfig
 
 plugin = create_memory_plugin(
-    model_config=ModelConfig(provider="ollama", model_name="qwen2.5:3b"),
-    embedding_config=EmbeddingConfig(provider="ollama", model_name="nomic-embed-text"),
+    model_config=ModelConfig(model_name="deepseek-chat", api_key="YOUR_API_KEY"),
+    embedding_config=EmbeddingConfig(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"),
     storage_path="data/pamt_memory.json",
 )
 
@@ -100,10 +78,11 @@ Signals:
 - Information density
 - Formality
 
-Extractor flow:
-- Preferred models (RoBERTa tone + SKEP emotion + OpenNRE density + formality)
-- HF fallback (GLiNER density)
-- Heuristic fallback (no external deps)
+Paper-aligned models:
+- RoBERTa encoder + multi-class head (Tone)
+- SKEP (Emotional tone)
+- OpenNRE (Information density via triples)
+- Formality classifier
 
 Length uses model token count when available; otherwise word count.
 
@@ -182,22 +161,17 @@ Key knobs:
 pamt/
   core/                 # prompting, memory tree, update logic
   extractors/           # preference extraction
-  embeddings/           # embedding clients
-  llms/                 # LLM clients
+  embeddings/           # HF embeddings
+  llms/                 # DeepSeek LLM client
   memory_plugin.py      # external plugin wrapper
 example/
-  chatbot.py            # CLI example
-  visual_chatbot.py     # visual UI server
+  chatbot/              # CLI example
 prompts/
   category_leaf.txt     # label inference
   leaf_only.txt
   leaf_merge_summary.txt
 ```
 
----
 
-## Notes
-
-This repo is a **reproduction scaffold + engineering extension** focusing on preference-aware personalization and memory routing.
 
 

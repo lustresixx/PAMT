@@ -1,9 +1,9 @@
-﻿from .config import EmbeddingConfig, ExperimentConfig, ModelConfig, PreferenceConfig, UpdateConfig
+from .config import EmbeddingConfig, ExperimentConfig, ModelConfig, PreferenceConfig, UpdateConfig
 from .core.agent import PAMTAgent
 from .core.memory_tree import HierarchicalMemoryTree, RetrievalConfig
 from .core.update import PAMTUpdater
-from .embeddings.models import DeepSeekEmbeddings, HFLocalEmbeddings, OllamaEmbeddings
-from .extractors.preference_extractor import HeuristicPreferenceExtractor, ModelPreferenceExtractor
+from .embeddings.models import HFLocalEmbeddings
+from .extractors.preference_extractor import ModelPreferenceExtractor
 from .memory_plugin import MemoryAugmentation, MemoryPromptPlugin, create_memory_plugin
 
 __all__ = [
@@ -16,15 +16,9 @@ __all__ = [
     "HierarchicalMemoryTree",
     "RetrievalConfig",
     "PAMTUpdater",
-    "OllamaEmbeddings",
-    "DeepSeekEmbeddings",
     "HFLocalEmbeddings",
-    "HeuristicPreferenceExtractor",
     "ModelPreferenceExtractor",
     "MemoryAugmentation",
     "MemoryPromptPlugin",
     "create_memory_plugin",
 ]
-
-
-
