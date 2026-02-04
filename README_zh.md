@@ -38,7 +38,7 @@ python example/chatbot/chatbot.py \
   --embed-model sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 \
   --memory-file data/pamt_memory.json
 ```
-
+![img.png](asset/img.png)
 ---
 
 ## 外部插件（Memory Plugin）

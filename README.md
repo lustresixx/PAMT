@@ -38,7 +38,7 @@ python example/chatbot/chatbot.py \
   --embed-model sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 \
   --memory-file data/pamt_memory.json
 ```
-
+![img.png](asset/img.png)
 ---
 
 ### Environment\n\n- PAMT_HF_CACHE_DIR (optional): where HF models are cached/downloaded locally.\n- `PAMT_HF_TOKEN` (optional): Hugging Face access token if your environment requires auth.
