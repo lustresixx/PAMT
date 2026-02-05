@@ -162,9 +162,9 @@ def build_opennre_openie_model(
     model_id: str = DEFAULT_DENSITY_MODEL_ID,
     *,
     device: Optional[int | str] = None,
-    max_pairs: int = 64,
-    max_entities: int = 32,
-    max_text_tokens: int = 384,
+    max_pairs: int = 96,
+    max_entities: int = 40,
+    max_text_tokens: int = 512,
     spacy_model: str = "en_core_web_sm",
 ) -> OpenIEModel:
     """OpenNRE-based relation extraction for information density (paper model)."""

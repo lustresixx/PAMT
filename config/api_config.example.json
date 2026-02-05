@@ -1,7 +1,9 @@
 ﻿{
+  "provider": "deepseek",
   "model_name": "deepseek-chat",
   "api_base_url": "https://api.deepseek.com/v1",
   "api_key": "YOUR_API_KEY",
   "request_timeout": 600,
+  "embed_provider": "hf",
   "embed_model_name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 }

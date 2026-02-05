@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def _default_config_path() -> Path:
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     candidate = repo_root / "config" / "api_config.json"
     if candidate.is_file():
         return candidate
@@ -39,7 +39,7 @@ def _load_config(path: Path) -> dict:
         print(f"Config not found: {path}")
         raise SystemExit(1)
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as exc:
         print(f"Invalid JSON in config: {path} ({exc})")
         raise SystemExit(1)

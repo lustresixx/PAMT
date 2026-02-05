@@ -6,22 +6,23 @@ from typing import Any, Dict, List
 
 @dataclass
 class UpdateConfig:
-    window_size: int = 2
-    ema_decay: float = 0.6  # EMA smoothing factor
-    fuse_weight: float = 0.5  # SW/EMA blend weight
-    change_threshold: float = 1.0  # change trigger threshold
-    variance_window: int = 10
-    epsilon: float = 1e-6
+    window_size: int = 3
+    ema_decay: float = 0.7  # EMA smoothing factor
+    fuse_weight: float = 0.6  # SW/EMA blend weight
+    change_threshold: float = 0.9  # change trigger threshold
+    variance_window: int = 8
+    epsilon: float = 1e-5
 
 
 @dataclass
 class PreferenceConfig:
-    length_history: int = 5
+    length_history: int = 3
+    length_normalizer: int = 360
     tone_labels: List[str] = field(default_factory=lambda: ["humorous", "serious", "gentle", "neutral"])
     emotion_labels: List[str] = field(default_factory=lambda: ["neutral", "joy", "sadness", "anger", "fear"])
-    density_bins: List[float] = field(default_factory=lambda: [0.2, 0.6])
-    length_bins: List[float] = field(default_factory=lambda: [0.3, 0.6])
-    formality_bins: List[float] = field(default_factory=lambda: [0.3, 0.7])
+    density_bins: List[float] = field(default_factory=lambda: [0.3, 0.55])
+    length_bins: List[float] = field(default_factory=lambda: [0.28, 0.65])
+    formality_bins: List[float] = field(default_factory=lambda: [0.35, 0.75])
 
 
 @dataclass

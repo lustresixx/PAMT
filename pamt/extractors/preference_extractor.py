@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
+import re
 from typing import Callable, List, Optional, Tuple
 
 from ..config import PreferenceConfig
@@ -14,6 +15,73 @@ FormalityModel = Callable[[str], float]
 OpenIEModel = Callable[[str], List[Tuple[str, str, str]]]
 
 logger = logging.getLogger(__name__)
+
+
+_DENSITY_TOKEN_RE = re.compile("[A-Za-z]+(?:'[A-Za-z]+)?|\\d+(?:\\.\\d+)?|[\u4e00-\u9fff]+")
+_DENSITY_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "been",
+    "but",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "he",
+    "her",
+    "here",
+    "him",
+    "his",
+    "i",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "me",
+    "might",
+    "my",
+    "not",
+    "of",
+    "on",
+    "or",
+    "our",
+    "she",
+    "should",
+    "so",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "to",
+    "us",
+    "was",
+    "we",
+    "were",
+    "will",
+    "with",
+    "would",
+    "you",
+    "your",
+}
 
 
 @dataclass
@@ -60,8 +128,8 @@ class ModelPreferenceExtractor(PreferenceExtractor):
         density_model_id: str = "wiki80_bert_softmax",
         device: int | str | None = None,
         max_length: int = 256,
-        opennre_max_pairs: int = 64,
-        opennre_max_entities: int = 32,
+        opennre_max_pairs: int = 96,
+        opennre_max_entities: int = 40,
         spacy_model: str = "en_core_web_sm",
         hf_cache_dir: str | None = None,
     ) -> "ModelPreferenceExtractor":
@@ -149,14 +217,29 @@ class ModelPreferenceExtractor(PreferenceExtractor):
         if not history:
             return 0.0
         avg_len = sum(history) / len(history)
-        return min(avg_len / 300.0, 1.0)
+        normalizer = max(int(self.config.length_normalizer), 1)
+        return min(avg_len / float(normalizer), 1.0)
 
     def _information_density(self, assistant_text: str) -> float:
-        triples = self.openie_model(assistant_text)
-        words = assistant_text.split()
-        if not words:
+        if not assistant_text.strip():
             return 0.0
-        return min(len(triples) / max(len(words), 1), 1.0)
+        triples = self.openie_model(assistant_text)
+        tokens, content_count, numeric_count, cjk_count = _density_stats(assistant_text)
+        token_count = len(tokens)
+        if token_count <= 0:
+            token_count = len(assistant_text.split())
+        if token_count <= 0:
+            return 0.0
+        triple_density = min(len(triples) / float(token_count), 1.0)
+        lexical_density = _lexical_density_from_stats(
+            tokens,
+            content_count,
+            numeric_count,
+            cjk_count,
+        )
+        if not triples:
+            return lexical_density
+        return min((triple_density * 0.5) + (lexical_density * 0.5), 1.0)
 
 
 def build_preference_extractor(
@@ -167,3 +250,70 @@ def build_preference_extractor(
     if not prefer_model:
         raise ValueError("prefer_model=False is not supported in strict model-only mode.")
     return ModelPreferenceExtractor.from_preferred_models(config)
+
+
+def _normalize_density_text(text: str) -> str:
+    if not text:
+        return ""
+    return (
+        text.replace("**", " ")
+        .replace("__", " ")
+        .replace("`", " ")
+        .replace("*", " ")
+        .replace("_", " ")
+    )
+
+
+def _is_cjk(token: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in token)
+
+
+def _chunk_cjk(token: str, size: int = 2) -> List[str]:
+    if len(token) <= size:
+        return [token]
+    return [token[i : i + size] for i in range(0, len(token), size)]
+
+
+def _density_stats(text: str) -> Tuple[List[str], int, int, int]:
+    cleaned = _normalize_density_text(text)
+    raw_tokens = _DENSITY_TOKEN_RE.findall(cleaned)
+    tokens: List[str] = []
+    content_count = 0
+    numeric_count = 0
+    cjk_count = 0
+    for token in raw_tokens:
+        if _is_cjk(token):
+            chunks = _chunk_cjk(token)
+            tokens.extend(chunks)
+            content_count += len(chunks)
+            cjk_count += len(chunks)
+            continue
+        norm = token.lower()
+        tokens.append(norm)
+        if norm not in _DENSITY_STOPWORDS:
+            content_count += 1
+        if any(ch.isdigit() for ch in norm):
+            numeric_count += 1
+    return tokens, content_count, numeric_count, cjk_count
+
+
+def _lexical_density_from_stats(
+    tokens: List[str],
+    content_count: int,
+    numeric_count: int,
+    cjk_count: int,
+) -> float:
+    total = len(tokens)
+    if total == 0:
+        return 0.0
+    unique_ratio = len(set(tokens)) / total
+    content_ratio = content_count / total
+    numeric_ratio = numeric_count / total
+    density = (0.45 * content_ratio) + (0.4 * unique_ratio) + (0.15 * numeric_ratio)
+    if (cjk_count / total) >= 0.6:
+        density *= 0.7
+    return _clamp(density)
+
+
+def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    return max(lo, min(hi, float(value)))

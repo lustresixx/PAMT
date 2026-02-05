@@ -40,14 +40,14 @@ class MemoryNode:
 
 @dataclass
 class RetrievalConfig:
-    similarity_strict: float = 0.75
-    similarity_loose: float = 0.6
-    max_candidates: int = 3
-    max_leaves_per_category: int = 8
-    leaf_reuse_threshold: float = 0.75
-    leaf_merge_threshold: float = 0.6
-    leaf_summary_max_samples: int = 4
-    short_query_max_chars: int = 6
+    similarity_strict: float = 0.8
+    similarity_loose: float = 0.65
+    max_candidates: int = 4
+    max_leaves_per_category: int = 6
+    leaf_reuse_threshold: float = 0.8
+    leaf_merge_threshold: float = 0.65
+    leaf_summary_max_samples: int = 5
+    short_query_max_chars: int = 10
 
 
 @dataclass
