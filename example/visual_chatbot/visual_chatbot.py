@@ -846,6 +846,17 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.set_defaults(use_model_extractor=True)
 
+    parser.add_argument("--tone-model-id", default=None)
+    parser.add_argument("--emotion-model-id", default=None)
+    parser.add_argument("--formality-model-id", default=None)
+    parser.add_argument("--density-model-id", default=None)
+    parser.add_argument("--spacy-model", default=None)
+    parser.add_argument("--tone-max-length", type=int, default=None)
+    parser.add_argument("--formality-max-length", type=int, default=None)
+    parser.add_argument("--opennre-max-pairs", type=int, default=None)
+    parser.add_argument("--opennre-max-entities", type=int, default=None)
+    parser.add_argument("--opennre-max-text-tokens", type=int, default=None)
+
     # Langfuse arguments
     parser.add_argument(
         "--langfuse",
@@ -916,6 +927,27 @@ def main() -> None:
     )
 
     pref_config = PreferenceConfig()
+    model_cfg = pref_config.preference_models
+    if args.tone_model_id:
+        model_cfg.tone_model_id = args.tone_model_id
+    if args.emotion_model_id:
+        model_cfg.emotion_model_id = args.emotion_model_id
+    if args.formality_model_id:
+        model_cfg.formality_model_id = args.formality_model_id
+    if args.density_model_id:
+        model_cfg.density_model_id = args.density_model_id
+    if args.spacy_model:
+        model_cfg.spacy_model = args.spacy_model
+    if args.tone_max_length is not None:
+        model_cfg.tone_max_length = args.tone_max_length
+    if args.formality_max_length is not None:
+        model_cfg.formality_max_length = args.formality_max_length
+    if args.opennre_max_pairs is not None:
+        model_cfg.opennre_max_pairs = args.opennre_max_pairs
+    if args.opennre_max_entities is not None:
+        model_cfg.opennre_max_entities = args.opennre_max_entities
+    if args.opennre_max_text_tokens is not None:
+        model_cfg.opennre_max_text_tokens = args.opennre_max_text_tokens
     update_config = UpdateConfig()
 
     llm = _build_llm(model_config)

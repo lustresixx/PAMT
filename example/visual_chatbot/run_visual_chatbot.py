@@ -87,6 +87,23 @@ def _build_args_from_config(config: dict) -> list[str]:
         "--embed-ollama-url",
         embed_ollama_url,
     ]
+    pref_models = config.get("preference_models", {}) or {}
+    pref_map = [
+        ("--tone-model-id", pref_models.get("tone_model_id")),
+        ("--emotion-model-id", pref_models.get("emotion_model_id")),
+        ("--formality-model-id", pref_models.get("formality_model_id")),
+        ("--density-model-id", pref_models.get("density_model_id")),
+        ("--spacy-model", pref_models.get("spacy_model")),
+        ("--tone-max-length", pref_models.get("tone_max_length")),
+        ("--formality-max-length", pref_models.get("formality_max_length")),
+        ("--opennre-max-pairs", pref_models.get("opennre_max_pairs")),
+        ("--opennre-max-entities", pref_models.get("opennre_max_entities")),
+        ("--opennre-max-text-tokens", pref_models.get("opennre_max_text_tokens")),
+    ]
+    for flag, value in pref_map:
+        if value is None or value == "":
+            continue
+        args.extend([flag, str(value)])
 
     # Add langfuse arguments if enabled
     if config.get("langfuse_enabled", False):

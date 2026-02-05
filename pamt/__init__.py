@@ -1,4 +1,11 @@
-from .config import EmbeddingConfig, ExperimentConfig, ModelConfig, PreferenceConfig, UpdateConfig
+from .config import (
+    EmbeddingConfig,
+    ExperimentConfig,
+    ModelConfig,
+    PreferenceConfig,
+    PreferenceModelConfig,
+    UpdateConfig,
+)
 from .core.agent import PAMTAgent
 from .core.memory_tree import HierarchicalMemoryTree, RetrievalConfig
 from .core.update import PAMTUpdater
@@ -11,6 +18,7 @@ __all__ = [
     "ModelConfig",
     "EmbeddingConfig",
     "PreferenceConfig",
+    "PreferenceModelConfig",
     "UpdateConfig",
     "PAMTAgent",
     "HierarchicalMemoryTree",

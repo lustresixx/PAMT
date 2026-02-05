@@ -6,7 +6,19 @@ import os
 import urllib.request
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from ..config import PreferenceConfig
+from ..config import (
+    DEFAULT_DENSITY_MODEL_ID,
+    DEFAULT_EMOTION_MODEL_ID,
+    DEFAULT_FORMALITY_MAX_LENGTH,
+    DEFAULT_FORMALITY_MODEL_ID,
+    DEFAULT_OPENNRE_MAX_ENTITIES,
+    DEFAULT_OPENNRE_MAX_PAIRS,
+    DEFAULT_OPENNRE_MAX_TEXT_TOKENS,
+    DEFAULT_SPACY_MODEL,
+    DEFAULT_TONE_MAX_LENGTH,
+    DEFAULT_TONE_MODEL_ID,
+    PreferenceConfig,
+)
 from ..core.types import CategoryWithProb
 
 
@@ -16,12 +28,6 @@ FormalityModel = Callable[[str], float]
 OpenIEModel = Callable[[str], List[Tuple[str, str, str]]]
 
 logger = logging.getLogger(__name__)
-
-
-DEFAULT_TONE_MODEL_ID = "FacebookAI/roberta-large-mnli"
-DEFAULT_EMOTION_MODEL_ID = "skep_ernie_1.0_large_ch"
-DEFAULT_FORMALITY_MODEL_ID = "s-nlp/roberta-base-formality-ranker"
-DEFAULT_DENSITY_MODEL_ID = "wiki80_bert_softmax"
 
 
 TONE_LABEL_ALIASES: Dict[str, str] = {
@@ -49,7 +55,7 @@ def build_roberta_tone_model(
     config: PreferenceConfig,
     model_id: str = DEFAULT_TONE_MODEL_ID,
     device: Optional[int | str] = None,
-    max_length: int = 256,
+    max_length: int = DEFAULT_TONE_MAX_LENGTH,
     cache_dir: str | None = None,
 ) -> ToneModel:
     """RoBERTa encoder + classification head for tone style (paper model)."""
@@ -125,7 +131,7 @@ def build_skep_emotion_model(
 def build_hf_formality_model(
     model_id: str = DEFAULT_FORMALITY_MODEL_ID,
     device: Optional[int | str] = None,
-    max_length: int = 256,
+    max_length: int = DEFAULT_FORMALITY_MAX_LENGTH,
     cache_dir: str | None = None,
 ) -> FormalityModel:
     """Formality classifier (paper model)."""
@@ -162,10 +168,10 @@ def build_opennre_openie_model(
     model_id: str = DEFAULT_DENSITY_MODEL_ID,
     *,
     device: Optional[int | str] = None,
-    max_pairs: int = 96,
-    max_entities: int = 40,
-    max_text_tokens: int = 512,
-    spacy_model: str = "en_core_web_sm",
+    max_pairs: int = DEFAULT_OPENNRE_MAX_PAIRS,
+    max_entities: int = DEFAULT_OPENNRE_MAX_ENTITIES,
+    max_text_tokens: int = DEFAULT_OPENNRE_MAX_TEXT_TOKENS,
+    spacy_model: str = DEFAULT_SPACY_MODEL,
 ) -> OpenIEModel:
     """OpenNRE-based relation extraction for information density (paper model)."""
     _ensure_home_env()

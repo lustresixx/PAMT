@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Callable, List, Optional, Tuple
 
-from ..config import PreferenceConfig
+from ..config import PreferenceConfig, PreferenceModelConfig
 from ..core.types import CategoryWithProb, PreferenceVector
 
 
@@ -122,15 +122,17 @@ class ModelPreferenceExtractor(PreferenceExtractor):
         cls,
         config: PreferenceConfig,
         *,
-        tone_model_id: str = "FacebookAI/roberta-large-mnli",
-        emotion_model_id: str = "skep_ernie_1.0_large_ch",
-        formality_model_id: str = "s-nlp/roberta-base-formality-ranker",
-        density_model_id: str = "wiki80_bert_softmax",
+        model_config: PreferenceModelConfig | None = None,
+        tone_model_id: str | None = None,
+        emotion_model_id: str | None = None,
+        formality_model_id: str | None = None,
+        density_model_id: str | None = None,
         device: int | str | None = None,
-        max_length: int = 256,
-        opennre_max_pairs: int = 96,
-        opennre_max_entities: int = 40,
-        spacy_model: str = "en_core_web_sm",
+        max_length: int | None = None,
+        opennre_max_pairs: int | None = None,
+        opennre_max_entities: int | None = None,
+        opennre_max_text_tokens: int | None = None,
+        spacy_model: str | None = None,
         hf_cache_dir: str | None = None,
     ) -> "ModelPreferenceExtractor":
         from .preference_models import (
@@ -140,12 +142,41 @@ class ModelPreferenceExtractor(PreferenceExtractor):
             build_hf_formality_model,
         )
 
+        model_cfg = model_config or config.preference_models
+        tone_model_id = tone_model_id or model_cfg.tone_model_id
+        emotion_model_id = emotion_model_id or model_cfg.emotion_model_id
+        formality_model_id = formality_model_id or model_cfg.formality_model_id
+        density_model_id = density_model_id or model_cfg.density_model_id
+        spacy_model = spacy_model or model_cfg.spacy_model
+        opennre_max_pairs = (
+            opennre_max_pairs
+            if opennre_max_pairs is not None
+            else model_cfg.opennre_max_pairs
+        )
+        opennre_max_entities = (
+            opennre_max_entities
+            if opennre_max_entities is not None
+            else model_cfg.opennre_max_entities
+        )
+        opennre_max_text_tokens = (
+            opennre_max_text_tokens
+            if opennre_max_text_tokens is not None
+            else model_cfg.opennre_max_text_tokens
+        )
+        tone_max_length = (
+            max_length if max_length is not None else model_cfg.tone_max_length
+        )
+        formality_max_length = (
+            max_length if max_length is not None else model_cfg.formality_max_length
+        )
+
         logger.info(
-            "preference_models: tone=%s emotion=%s formality=%s density=%s device=%s",
+            "preference_models: tone=%s emotion=%s formality=%s density=%s spacy=%s device=%s",
             tone_model_id,
             emotion_model_id,
             formality_model_id,
             density_model_id,
+            spacy_model,
             device,
         )
 
@@ -153,7 +184,7 @@ class ModelPreferenceExtractor(PreferenceExtractor):
             config,
             model_id=tone_model_id,
             device=device,
-            max_length=max_length,
+            max_length=tone_max_length,
             cache_dir=hf_cache_dir,
         )
         emotion_model = build_skep_emotion_model(
@@ -164,7 +195,7 @@ class ModelPreferenceExtractor(PreferenceExtractor):
         formality_model = build_hf_formality_model(
             model_id=formality_model_id,
             device=device,
-            max_length=max_length,
+            max_length=formality_max_length,
             cache_dir=hf_cache_dir,
         )
         openie_model = build_opennre_openie_model(
@@ -172,6 +203,7 @@ class ModelPreferenceExtractor(PreferenceExtractor):
             device=device,
             max_pairs=opennre_max_pairs,
             max_entities=opennre_max_entities,
+            max_text_tokens=opennre_max_text_tokens,
             spacy_model=spacy_model,
         )
         return cls(

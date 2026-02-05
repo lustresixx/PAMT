@@ -5,5 +5,17 @@
   "api_key": "YOUR_API_KEY",
   "request_timeout": 600,
   "embed_provider": "hf",
-  "embed_model_name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+  "embed_model_name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "preference_models": {
+    "tone_model_id": "FacebookAI/roberta-large-mnli",
+    "emotion_model_id": "skep_ernie_1.0_large_ch",
+    "formality_model_id": "s-nlp/roberta-base-formality-ranker",
+    "density_model_id": "wiki80_bert_softmax",
+    "spacy_model": "en_core_web_sm",
+    "tone_max_length": 256,
+    "formality_max_length": 256,
+    "opennre_max_pairs": 96,
+    "opennre_max_entities": 40,
+    "opennre_max_text_tokens": 512
+  }
 }
