@@ -4,6 +4,8 @@ const state = {
 };
 
 let currentLang = 'en';
+let lastTreeSnapshot = null;
+let lastComputationData = null;
 
 const translations = {
   en: {
@@ -47,6 +49,17 @@ const translations = {
     debug_memory: "Memory Context",
     memory_path: "Selected Path",
     memory_strategy: "Strategy",
+    detail_title: "Dialogue Computation",
+    detail_idle: "No computation data yet.",
+    detail_metrics: "SW / EMA / Fusion",
+    detail_update: "Response Update",
+    detail_before: "Before",
+    detail_after: "After",
+    detail_change: "Change",
+    detail_triggered: "Triggered",
+    detail_stable: "Stable",
+    detail_no_update: "No update data yet.",
+    detail_no_metrics: "No SW/EMA/Fusion data yet.",
     canvas_controls: "SCROLL TO ZOOM / DRAG TO PAN",
     tree_branches: "branches",
     tree_waiting: "Waiting for data...",
@@ -122,6 +135,17 @@ const translations = {
     debug_memory: "记忆上下文",
     memory_path: "选择路径",
     memory_strategy: "策略",
+    detail_title: "对话计算",
+    detail_idle: "暂无计算数据。",
+    detail_metrics: "SW / EMA / 融合",
+    detail_update: "新回复更新",
+    detail_before: "更新前",
+    detail_after: "更新后",
+    detail_change: "变化",
+    detail_triggered: "触发",
+    detail_stable: "稳定",
+    detail_no_update: "暂无更新数据。",
+    detail_no_metrics: "暂无 SW/EMA/融合 数据。",
     canvas_controls: "滚轮缩放 / 拖拽平移",
     tree_branches: "分支",
     tree_waiting: "等待数据...",
@@ -185,6 +209,7 @@ function updateStaticContent() {
   if (chatText) {
     chatText.placeholder = t('chat_placeholder');
   }
+  refreshDynamicPanels();
 }
 
 // --- DOM References ---
@@ -198,9 +223,64 @@ const useTreeToggle = document.getElementById("use-tree-toggle");
 const useContextToggle = document.getElementById("use-context-toggle");
 const nodeDetail = document.getElementById("node-detail");
 const debugLog = document.getElementById("debug-log");
+const computationDetail = document.getElementById("computation-detail");
+const debugToggle = document.getElementById("debug-toggle");
+const detailToggle = document.getElementById("detail-toggle");
 const statusPill = document.getElementById("status-pill");
 const langToggle = document.getElementById("lang-toggle");
 const chatPlaceholder = document.getElementById("chat-placeholder");
+
+const accordionItems = [
+  { name: "debug", toggle: debugToggle, panel: debugLog },
+  { name: "detail", toggle: detailToggle, panel: computationDetail }
+];
+
+function setAccordionOpen(item, open) {
+  if (!item || !item.toggle || !item.panel) return;
+  item.panel.classList.toggle("hidden", !open);
+  item.toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  const icon = item.toggle.querySelector("[data-accordion-icon]");
+  if (icon) icon.classList.toggle("rotate-180", open);
+}
+
+function toggleAccordion(name) {
+  const target = accordionItems.find((item) => item.name === name);
+  if (!target || !target.toggle || !target.panel) return;
+  const isOpen = !target.panel.classList.contains("hidden");
+
+  if (isOpen) {
+    setAccordionOpen(target, false);
+    return;
+  }
+
+  accordionItems.forEach((item) => {
+    if (!item.toggle || !item.panel) return;
+    setAccordionOpen(item, item.name === name);
+  });
+}
+
+function initAccordions() {
+  const activeItems = accordionItems.filter((item) => item.toggle && item.panel);
+  if (activeItems.length === 0) return;
+
+  const firstOpen = activeItems.find((item) => item.toggle.getAttribute("aria-expanded") === "true") || activeItems[0];
+  activeItems.forEach((item) => setAccordionOpen(item, item === firstOpen));
+  activeItems.forEach((item) => {
+    item.toggle.addEventListener("click", () => toggleAccordion(item.name));
+  });
+}
+
+initAccordions();
+
+function refreshDynamicPanels() {
+  if (lastComputationData) {
+    renderComputation(lastComputationData, { force: true });
+  }
+  if (lastTreeSnapshot) {
+    const selectedNode = state.selectedPath ? findNodeByPath(lastTreeSnapshot, state.selectedPath) : null;
+    renderNodeDetail(selectedNode);
+  }
+}
 
 // --- Tree Layout Constants ---
 const nodeWidth = 180;
@@ -312,6 +392,132 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+function formatNumber(value, digits = 3) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return num.toFixed(digits);
+}
+
+function normalizeCategoricalPayload(catData) {
+  if (!catData) return null;
+  if (Array.isArray(catData) && catData.length >= 2) {
+    return { index: catData[0], probs: catData[1] || [] };
+  }
+  if (typeof catData === "object") {
+    const index = Number(catData.index);
+    const probs = Array.isArray(catData.probs) ? catData.probs : [];
+    return { index: Number.isFinite(index) ? index : 0, probs };
+  }
+  return null;
+}
+
+function getCategoricalSummary(catData, labels) {
+  const normalized = normalizeCategoricalPayload(catData);
+  if (!normalized) return { label: t("val_neutral"), prob: 0 };
+  const maxProb = normalized.probs.length ? Math.max(...normalized.probs) : 0;
+  const label = labels[normalized.index] || t("val_neutral");
+  return { label, prob: maxProb };
+}
+
+function formatFusionInline(fusion) {
+  if (!fusion) return "-";
+  return `len ${formatNumber(fusion.length)} / den ${formatNumber(fusion.density)} / form ${formatNumber(fusion.formality)}`;
+}
+
+function formatFusionMetrics(fusion) {
+  const toneLabels = [t("val_neutral"), t("val_friendly"), t("val_formal"), t("val_casual")];
+  const emotionLabels = [t("val_neutral"), t("val_joy"), t("val_sadness"), t("val_anger"), t("val_fear")];
+  const tone = getCategoricalSummary(fusion.tone, toneLabels);
+  const emotion = getCategoricalSummary(fusion.emotion, emotionLabels);
+  const toneProb = tone.prob ? ` (${Math.round(tone.prob * 100)}%)` : "";
+  const emotionProb = emotion.prob ? ` (${Math.round(emotion.prob * 100)}%)` : "";
+
+  return `
+    <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-slate-600">
+      <div class="flex items-center justify-between">
+        <span>${t("lbl_length")}</span>
+        <span class="font-mono text-slate-700">${formatNumber(fusion.length)}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span>${t("lbl_density")}</span>
+        <span class="font-mono text-slate-700">${formatNumber(fusion.density)}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span>${t("lbl_formality")}</span>
+        <span class="font-mono text-slate-700">${formatNumber(fusion.formality)}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span>${t("lbl_tone")}</span>
+        <span class="text-slate-600">${tone.label}${toneProb}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span>${t("lbl_emotion")}</span>
+        <span class="text-slate-600">${emotion.label}${emotionProb}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderMetricSection(title, fusion) {
+  const content = fusion
+    ? formatFusionMetrics(fusion)
+    : `<div class="text-[11px] text-slate-400 italic">-</div>`;
+
+  return `
+    <div class="rounded-lg border border-slate-100 bg-slate-50/70 p-2">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">${title}</span>
+      </div>
+      ${content}
+    </div>
+  `;
+}
+
+function renderUpdateRow(title, change, weight) {
+  if (!change) return "";
+  const changeSignal = change.change_signal;
+  const isTriggered = changeSignal && changeSignal.overall_triggered;
+  const badgeClass = changeSignal
+    ? (isTriggered ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-600")
+    : "bg-slate-100 text-slate-500";
+  const badgeText = changeSignal ? (isTriggered ? t("detail_triggered") : t("detail_stable")) : t("detail_change");
+  const weightLabel = Number.isFinite(Number(weight)) ? `w=${formatNumber(weight, 2)}` : "w=-";
+
+  return `
+    <div class="rounded-lg border border-slate-100 bg-white p-2">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-[10px] font-semibold text-slate-700">${title}</span>
+        <div class="flex items-center gap-1.5">
+          <span class="text-[10px] text-slate-400">${weightLabel}</span>
+          <span class="text-[10px] ${badgeClass} px-1.5 py-0.5 rounded-full">${badgeText}</span>
+        </div>
+      </div>
+      <div class="text-[10px] text-slate-500">${t("detail_before")}: <span class="font-mono text-slate-600">${formatFusionInline(change.before)}</span></div>
+      <div class="text-[10px] text-slate-500">${t("detail_after")}: <span class="font-mono text-slate-700">${formatFusionInline(change.after)}</span></div>
+    </div>
+  `;
+}
+
+function findNodeByPath(node, path) {
+  if (!node || !path || path.length === 0) return null;
+  if (Array.isArray(node.path) && node.path.length === path.length) {
+    const matches = node.path.every((value, idx) => value === path[idx]);
+    if (matches) return node;
+  }
+  if (!Array.isArray(node.children)) return null;
+  for (const child of node.children) {
+    const found = findNodeByPath(child, path);
+    if (found) return found;
+  }
+  return null;
+}
+
+function getRootName(tree) {
+  if (!tree) return null;
+  if (Array.isArray(tree.path) && tree.path.length > 0) return tree.path[0];
+  return tree.name || null;
 }
 
 // --- Preference Label Formatting ---
@@ -539,7 +745,107 @@ function renderNodeDetail(node) {
 // --- Computation/Debug Log Rendering ---
 let lastComputationState = null;
 
-function renderComputation(data) {
+function renderComputationDetail(data) {
+  if (!computationDetail) return;
+
+  const progress = data?.progress || {};
+  const debug = data?.debug || {};
+  const memory = progress.memory || debug.memory;
+  const updateInfo = progress.update || debug.update;
+  const retrieval = progress.retrieval || debug.retrieval;
+
+  if (!memory && !updateInfo && !retrieval) {
+    computationDetail.innerHTML = `
+      <div class="p-4 text-slate-400 italic">${t("detail_idle")}</div>
+    `;
+    return;
+  }
+
+  const tree = data?.tree || lastTreeSnapshot;
+  const rootName = getRootName(tree);
+  let focusPath = null;
+  if (updateInfo && Array.isArray(updateInfo.path) && rootName) {
+    focusPath = [rootName, ...updateInfo.path];
+  }
+  const candidatePath = memory?.path || retrieval?.selected_path;
+  if (!focusPath && Array.isArray(candidatePath)) {
+    focusPath = candidatePath.slice();
+  }
+  if (focusPath && rootName && focusPath[0] !== rootName && focusPath.length === 2) {
+    focusPath = [rootName, ...focusPath];
+  }
+
+  const rootNode = tree || null;
+  const leafNode = focusPath && tree ? findNodeByPath(tree, focusPath) : null;
+  const categoryNode = focusPath && tree && focusPath.length >= 2 ? findNodeByPath(tree, focusPath.slice(0, 2)) : null;
+  const metricsNode = leafNode || categoryNode || rootNode;
+
+  const pathText = focusPath ? focusPath.join(" / ") : "-";
+  const mode = progress.mode || debug.mode;
+  const useContext = progress.use_context ?? debug.use_context;
+  const strategy = memory?.strategy || retrieval?.strategy;
+  const badges = [];
+
+  if (mode) {
+    const modeLabel = mode === "baseline" ? t("mode_baseline") : t("mode_tree");
+    badges.push(`<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600">${t("mode_label")}: ${modeLabel}</span>`);
+  }
+  if (useContext !== undefined && useContext !== null) {
+    const contextLabel = useContext ? t("context_on") : t("context_off");
+    badges.push(`<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600">${t("context_label")}: ${contextLabel}</span>`);
+  }
+  if (strategy) {
+    badges.push(`<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600">${t("memory_strategy")}: ${escapeHtml(String(strategy))}</span>`);
+  }
+
+  const hasMetrics = metricsNode && (metricsNode.sw || metricsNode.ema || metricsNode.fusion);
+  const metricsHtml = hasMetrics
+    ? [
+      renderMetricSection("SW", metricsNode?.sw),
+      renderMetricSection("EMA", metricsNode?.ema),
+      renderMetricSection("Fusion", metricsNode?.fusion)
+    ].join("")
+    : `<div class="text-[11px] text-slate-400 italic">${t("detail_no_metrics")}</div>`;
+
+  let updateHtml = `<div class="text-[11px] text-slate-400 italic">${t("detail_no_update")}</div>`;
+  if (updateInfo && updateInfo.changes) {
+    updateHtml = `
+      <div class="space-y-2">
+        ${renderUpdateRow("Leaf", updateInfo.changes.leaf, updateInfo.weights?.leaf)}
+        ${renderUpdateRow("Category", updateInfo.changes.category, updateInfo.weights?.category)}
+        ${renderUpdateRow("Root", updateInfo.changes.root, updateInfo.weights?.root)}
+      </div>
+    `;
+  }
+
+  computationDetail.innerHTML = `
+    <div class="p-4 space-y-3">
+      <div>
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">${t("memory_path")}</span>
+          ${metricsNode ? `<span class="text-[10px] text-slate-400">Node: ${escapeHtml(metricsNode.name)}</span>` : ""}
+        </div>
+        <div class="mt-1 text-[11px] text-slate-600 font-mono break-words">${escapeHtml(pathText)}</div>
+        ${badges.length ? `<div class="mt-2 flex flex-wrap gap-1.5 text-[10px]">${badges.join("")}</div>` : ""}
+      </div>
+      <div class="pt-3 border-t border-slate-100">
+        <h5 class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2">${t("detail_metrics")}</h5>
+        <div class="space-y-2">
+          ${metricsHtml}
+        </div>
+      </div>
+      <div class="pt-3 border-t border-slate-100">
+        <h5 class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2">${t("detail_update")}</h5>
+        ${updateHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderComputation(data, options = {}) {
+  const force = options && options.force === true;
+  lastComputationData = data;
+  renderComputationDetail(data);
   if (!debugLog) return;
 
   // Create a state key to check if we need to re-render
@@ -550,7 +856,7 @@ function renderComputation(data) {
   });
 
   // Skip re-render if state hasn't changed (prevents flashing)
-  if (lastComputationState === stateKey) return;
+  if (!force && lastComputationState === stateKey) return;
   lastComputationState = stateKey;
 
   if (!data || data.status === 'idle' || (!data.progress && data.status !== 'error' && data.status !== 'done')) {
@@ -768,6 +1074,8 @@ function layoutTree(root) {
 
 function renderTree(root) {
   if (!treeSvg || !root) return;
+
+  lastTreeSnapshot = root;
 
   // Clear existing
   treeSvg.innerHTML = '';
